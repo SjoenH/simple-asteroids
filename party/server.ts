@@ -149,7 +149,7 @@ export default class GameServer implements Party.Server {
     const speed = ASTEROID_SPEED * (0.5 + Math.random()) * (4 - size) * 0.5;
     this.asteroids.set(id, { x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, size });
     this.room.broadcast(
-      JSON.stringify({ type: "asteroidMoved", id, x, y }),
+      JSON.stringify({ type: "asteroidMoved", id, x, y, size }),
     );
     return id;
   }
@@ -213,7 +213,7 @@ export default class GameServer implements Party.Server {
       a.y = wrap(a.y, WORLD_H);
 
       this.room.broadcast(
-        JSON.stringify({ type: "asteroidMoved", id, x: a.x, y: a.y }),
+        JSON.stringify({ type: "asteroidMoved", id, x: a.x, y: a.y, size: a.size }),
       );
     }
 

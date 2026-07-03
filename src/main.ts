@@ -198,7 +198,9 @@ function movePlayer(id: string, x: number, y: number, rotation?: number): void {
   if (rotation !== undefined) p.sprite.rotation = rotation + Math.PI / 2;
 }
 
-function ensureAsteroid(id: string, x: number, y: number): void {
+const ASTEROID_SCALES: Record<number, number> = { 1: 1, 2: 0.6, 3: 0.35 };
+
+function ensureAsteroid(id: string, x: number, y: number, size?: number): void {
   if (!asteroids.has(id)) {
     const s = Sprite.from(ASSET_PATHS.asteroid);
     s.anchor.set(0.5);
@@ -208,6 +210,7 @@ function ensureAsteroid(id: string, x: number, y: number): void {
   const s = asteroids.get(id) as Sprite;
   s.x = x;
   s.y = y;
+  if (size !== undefined) s.scale.set(ASTEROID_SCALES[size] ?? 1);
 }
 
 function dropAsteroid(id: string): void {
@@ -357,7 +360,8 @@ function handleMessage(e: MessageEvent): void {
       const id = data.id as string;
       const x = data.x as number;
       const y = data.y as number;
-      ensureAsteroid(id, x, y);
+      const size = data.size as number | undefined;
+      ensureAsteroid(id, x, y, size);
       break;
     }
 
