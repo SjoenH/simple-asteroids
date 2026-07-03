@@ -1,4 +1,4 @@
-import type * as Party from "partykit/server";
+import { Server, Connection, ConnectionContext } from "partyserver";
 
 const WORLD_W = 800;
 const WORLD_H = 600;
@@ -54,20 +54,22 @@ function wrap(v: number, max: number): number {
   return ((v % max) + max) % max;
 }
 
-export default class GameServer implements Party.Server {
+export class GameServer extends Server {
   private players = new Map<string, PlayerState>();
   private asteroids = new Map<string, AsteroidState>();
   private bullets = new Map<string, BulletState>();
   private tickInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor(readonly room: Party.Room) {}
+  constructor(ctx: DurableObjectState, env: Record<string, unknown>) {
+    super(ctx, env);
+  }
 
   async onStart(): Promise<void> {
     this.spawnAsteroids(6);
     this.tickInterval = setInterval(() => this.tick(), 1000 / 30);
   }
 
-  async onConnect(connection: Party.Connection): Promise<void> {
+  async onConnect(connection: Connection, ctx: ConnectionContext): Promise<void> {
     const player: PlayerState = {
       name: "Unknown",
       x: WORLD_W / 2 + (Math.random() - 0.5) * 200,
@@ -87,7 +89,7 @@ export default class GameServer implements Party.Server {
 
     connection.send(JSON.stringify({ type: "connected", id: connection.id }));
 
-    this.room.broadcast(
+    this.broadcast(
       JSON.stringify({
         type: "playerJoined",
         id: connection.id,
@@ -96,8 +98,7 @@ export default class GameServer implements Party.Server {
     );
   }
 
-  async onMessage(message: string | ArrayBuffer, sender: Party.Connection): Promise<void> {
-    if (typeof message !== "string") return;
+  async onMessage(connection: Connection, message: string): Promise<void> {
     let data: Record<string, unknown>;
     try {
       data = JSON.parse(message);
@@ -105,16 +106,16 @@ export default class GameServer implements Party.Server {
       return;
     }
 
-    const player = this.players.get(sender.id);
+    const player = this.players.get(connection.id);
     if (!player) return;
 
     switch (data.type) {
       case "setName":
         player.name = String(data.name ?? "Unknown");
-        this.room.broadcast(
+        this.broadcast(
           JSON.stringify({
             type: "playerRenamed",
-            id: sender.id,
+            id: connection.id,
             name: player.name,
           }),
         );
@@ -128,9 +129,9 @@ export default class GameServer implements Party.Server {
     }
   }
 
-  async onClose(connection: Party.Connection): Promise<void> {
+  async onClose(connection: Connection): Promise<void> {
     this.players.delete(connection.id);
-    this.room.broadcast(JSON.stringify({ type: "playerLeft", id: connection.id }));
+    this.broadcast(JSON.stringify({ type: "playerLeft", id: connection.id }));
   }
 
   private spawnAsteroids(count: number, size = 1): void {
@@ -148,7 +149,7 @@ export default class GameServer implements Party.Server {
     const id = `ast_${nextAsteroidId++}`;
     const speed = ASTEROID_SPEED * (0.5 + Math.random()) * (4 - size) * 0.5;
     this.asteroids.set(id, { x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, size });
-    this.room.broadcast(
+    this.broadcast(
       JSON.stringify({ type: "asteroidMoved", id, x, y, size }),
     );
     return id;
@@ -183,7 +184,7 @@ export default class GameServer implements Party.Server {
       p.x = wrap(p.x, WORLD_W);
       p.y = wrap(p.y, WORLD_H);
 
-      this.room.broadcast(
+      this.broadcast(
         JSON.stringify({
           type: "playerMoved",
           id,
@@ -201,7 +202,7 @@ export default class GameServer implements Party.Server {
       b.y = wrap(b.y, WORLD_H);
       b.life -= dt;
 
-      this.room.broadcast(
+      this.broadcast(
         JSON.stringify({ type: "bulletMoved", id, x: b.x, y: b.y, rotation: Math.atan2(b.vy, b.vx) }),
       );
     }
@@ -212,7 +213,7 @@ export default class GameServer implements Party.Server {
       a.x = wrap(a.x, WORLD_W);
       a.y = wrap(a.y, WORLD_H);
 
-      this.room.broadcast(
+      this.broadcast(
         JSON.stringify({ type: "asteroidMoved", id, x: a.x, y: a.y, size: a.size }),
       );
     }
@@ -241,7 +242,7 @@ export default class GameServer implements Party.Server {
 
     for (const bid of deadBullets) {
       this.bullets.delete(bid);
-      this.room.broadcast(JSON.stringify({ type: "bulletRemoved", id: bid }));
+      this.broadcast(JSON.stringify({ type: "bulletRemoved", id: bid }));
     }
 
     for (const [aid, ownerIds] of hitAsteroids) {
@@ -249,7 +250,7 @@ export default class GameServer implements Party.Server {
       if (!a) continue;
 
       this.asteroids.delete(aid);
-      this.room.broadcast(JSON.stringify({ type: "asteroidRemoved", id: aid }));
+      this.broadcast(JSON.stringify({ type: "asteroidRemoved", id: aid }));
 
       if (a.size < 3) {
         const childSize = a.size + 1;
@@ -263,7 +264,7 @@ export default class GameServer implements Party.Server {
         const p = this.players.get(ownerId);
         if (p) {
           p.score += ASTEROID_SCORES[a.size];
-          this.room.broadcast(
+          this.broadcast(
             JSON.stringify({ type: "scoreUpdated", id: ownerId, score: p.score }),
           );
         }
@@ -278,7 +279,7 @@ export default class GameServer implements Party.Server {
         const dy = p.y - a.y;
         if (Math.sqrt(dx * dx + dy * dy) < PLAYER_RADII[a.size]) {
           p.alive = false;
-          this.room.broadcast(JSON.stringify({ type: "playerKilled", id: pid }));
+          this.broadcast(JSON.stringify({ type: "playerKilled", id: pid }));
 
           setTimeout(() => {
             const player = this.players.get(pid);
@@ -288,7 +289,7 @@ export default class GameServer implements Party.Server {
             player.vx = 0;
             player.vy = 0;
             player.alive = true;
-            this.room.broadcast(
+            this.broadcast(
               JSON.stringify({
                 type: "playerRespawned",
                 id: pid,
@@ -317,7 +318,7 @@ export default class GameServer implements Party.Server {
         });
         p.shootCooldown = SHOOT_COOLDOWN;
         const b = this.bullets.get(bid)!;
-        this.room.broadcast(
+        this.broadcast(
           JSON.stringify({ type: "bulletMoved", id: bid, x: b.x, y: b.y, rotation: Math.atan2(b.vy, b.vx) }),
         );
       }

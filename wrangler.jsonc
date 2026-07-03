@@ -1,0 +1,27 @@
+{
+  "name": "simple-asteroids",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-07-03",
+  "workers_dev": false,
+  "routes": [
+    { "pattern": "asteroids.koka.no", "custom_domain": true }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GameServer",
+        "class_name": "GameServer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["GameServer"]
+    }
+  ],
+  "assets": {
+    "directory": "dist",
+    "not_found_handling": "single-page-application"
+  }
+}

@@ -12,7 +12,15 @@ dist
 dist-ssr
 *.local
 
-.partykit
+.partykit/
+
+# wrangler
+.wrangler/
+
+# Environment files (may contain secrets)
+.env
+.env.*
+!.env.example
 
 # Editor directories and files
 .vscode/*

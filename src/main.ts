@@ -10,7 +10,8 @@ import {
   TextStyle,
 } from 'pixi.js';
 
-const PARTY_HOST: string = import.meta.env.VITE_PARTY_HOST ?? 'localhost:1999';
+const PARTY_HOST: string = import.meta.env.VITE_PARTY_HOST ??
+  (import.meta.env.DEV ? `${window.location.hostname}:8787` : window.location.host);
 
 const ASSET_PATHS = {
   player: '/assets/Player.png',
@@ -425,7 +426,8 @@ function connect(): void {
 
   ws = new PartySocket({
     host: PARTY_HOST,
-    room: 'game',
+    party: "game-server",
+    room: "game",
     startClosed: true,
   });
 

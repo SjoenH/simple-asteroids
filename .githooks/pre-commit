@@ -1,0 +1,47 @@
+#!/bin/sh
+# Pre-commit hook: block commits containing potential secrets
+
+RED='\033[0;31m'
+NC='\033[0m'
+
+# Patterns that look like secrets or credentials
+SECRET_PATTERNS="
+-----BEGIN (RSA |EC |DSA |OPENSSH |PGP )PRIVATE KEY-----
+gh[pousr]_[A-Za-z0-9]{36,}
+sk-[A-Za-z0-9]{20,}
+AKIA[0-9A-Z]{16}
+xox[baprs]-[0-9A-Za-z-]{24,}
+SFMY[0-9A-Za-z-]{36,}
+key-[0-9A-Za-z]{32,}
+api[_-]?key['\"]?\s*[:=]\s*['\"][A-Za-z0-9_\-]{16,}
+password['\"]?\s*[:=]\s*['\"][^'\"]{4,}
+secret['\"]?\s*[:=]\s*['\"][^'\"]{8,}
+token['\"]?\s*[:=]\s*['\"][A-Za-z0-9_\-\.]{8,}
+"
+
+# Join patterns with |
+PATTERN=$(echo "$SECRET_PATTERNS" | tr '\n' '|' | sed 's/||*/|/g; s/^|//; s/|$//')
+
+if [ -z "$PATTERN" ]; then
+  exit 0
+fi
+
+files=$(git diff --cached --name-only --diff-filter=ACMR)
+if [ -z "$files" ]; then
+  exit 0
+fi
+
+# Check staged content for secret patterns
+matches=$(echo "$files" | xargs -I{} sh -c 'git show ":{}"' 2>/dev/null \
+  | grep -inE "$PATTERN" \
+  | grep -v "^[0-9]*:\s*\*" \
+  | grep -v "^[0-9]*:\s*//" \
+  | grep -v "^[0-9]*:\s*#" \
+  || true)
+
+if [ -n "$matches" ]; then
+  printf "${RED}⚠  Possible secrets found in staged changes:${NC}\n"
+  echo "$matches"
+  printf "${RED}Commit blocked. Remove or unstage the above before committing.${NC}\n"
+  exit 1
+fi

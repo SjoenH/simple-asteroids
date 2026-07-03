@@ -1,5 +1,0 @@
-{
-  "name": "simple-asteroids",
-  "main": "party/server.ts",
-  "compatibilityDate": "2026-07-03"
-}
