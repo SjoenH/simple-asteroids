@@ -10,6 +10,9 @@ const BULLET_SPEED = 400;
 const BULLET_LIFE = 2;
 const SHOOT_COOLDOWN = 0.25;
 const ASTEROID_SPEED = 60;
+const ASTEROID_RADII: Record<number, number> = { 1: 40, 2: 26, 3: 14 };
+const PLAYER_RADII: Record<number, number> = { 1: 35, 2: 24, 3: 14 };
+const ASTEROID_SCORES: Record<number, number> = { 1: 20, 2: 50, 3: 100 };
 
 let nextAsteroidId = 1;
 let nextBulletId = 1;
@@ -130,26 +133,25 @@ export default class GameServer implements Party.Server {
     this.room.broadcast(JSON.stringify({ type: "playerLeft", id: connection.id }));
   }
 
-  private spawnAsteroids(count: number): void {
+  private spawnAsteroids(count: number, size = 1): void {
     for (let i = 0; i < count; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const id = `ast_${nextAsteroidId++}`;
-      this.asteroids.set(id, {
-        x: Math.random() * WORLD_W,
-        y: Math.random() * WORLD_H,
-        vx: Math.cos(angle) * ASTEROID_SPEED * (0.5 + Math.random()),
-        vy: Math.sin(angle) * ASTEROID_SPEED * (0.5 + Math.random()),
-        size: 1,
-      });
-      this.room.broadcast(
-        JSON.stringify({
-          type: "asteroidMoved",
-          id,
-          x: this.asteroids.get(id)!.x,
-          y: this.asteroids.get(id)!.y,
-        }),
+      this.spawnAsteroidAt(
+        Math.random() * WORLD_W,
+        Math.random() * WORLD_H,
+        size,
+        Math.random() * Math.PI * 2,
       );
     }
+  }
+
+  private spawnAsteroidAt(x: number, y: number, size: number, angle: number): string {
+    const id = `ast_${nextAsteroidId++}`;
+    const speed = ASTEROID_SPEED * (0.5 + Math.random()) * (4 - size) * 0.5;
+    this.asteroids.set(id, { x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, size });
+    this.room.broadcast(
+      JSON.stringify({ type: "asteroidMoved", id, x, y }),
+    );
+    return id;
   }
 
   private tick(): void {
@@ -227,7 +229,7 @@ export default class GameServer implements Party.Server {
       for (const [aid, a] of this.asteroids) {
         const dx = b.x - a.x;
         const dy = b.y - a.y;
-        if (Math.sqrt(dx * dx + dy * dy) < 40) {
+        if (Math.sqrt(dx * dx + dy * dy) < ASTEROID_RADII[a.size]) {
           deadBullets.push(bid);
           const list = hitAsteroids.get(aid) ?? [];
           list.push(b.ownerId);
@@ -249,10 +251,18 @@ export default class GameServer implements Party.Server {
       this.asteroids.delete(aid);
       this.room.broadcast(JSON.stringify({ type: "asteroidRemoved", id: aid }));
 
+      if (a.size < 3) {
+        const childSize = a.size + 1;
+        for (let i = 0; i < 2; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          const cid = this.spawnAsteroidAt(a.x, a.y, childSize, angle);
+        }
+      }
+
       for (const ownerId of ownerIds) {
         const p = this.players.get(ownerId);
         if (p) {
-          p.score += 100;
+          p.score += ASTEROID_SCORES[a.size];
           this.room.broadcast(
             JSON.stringify({ type: "scoreUpdated", id: ownerId, score: p.score }),
           );
@@ -266,7 +276,7 @@ export default class GameServer implements Party.Server {
       for (const [aid, a] of this.asteroids) {
         const dx = p.x - a.x;
         const dy = p.y - a.y;
-        if (Math.sqrt(dx * dx + dy * dy) < 35) {
+        if (Math.sqrt(dx * dx + dy * dy) < PLAYER_RADII[a.size]) {
           p.alive = false;
           this.room.broadcast(JSON.stringify({ type: "playerKilled", id: pid }));
 
