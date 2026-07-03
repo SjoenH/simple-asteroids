@@ -87,6 +87,7 @@ interface PlayerEntry {
   score: number;
   lives: number;
   name: string;
+  isNPC: boolean;
 }
 
 type PowerUpType = 'extraLife' | 'invisibility' | 'multiCannon';
@@ -130,8 +131,10 @@ const gameLayer = new Container();
 const hudLayer = new Container();
 const particleLayer = new Container();
 const debugContainer = new Container();
+const gameOverLayer = new Container();
 gameLayer.addChildAt(particleLayer, 0);
-app.stage.addChild(gameLayer, hudLayer, debugContainer);
+app.stage.addChild(gameLayer, hudLayer, debugContainer, gameOverLayer);
+gameOverLayer.visible = false;
 
 interface AmbientParticle {
   pos: Vec3;
@@ -252,6 +255,105 @@ function refreshScoreboard(): void {
 function setStatus(text: string, color: number): void {
   statusText.text = text;
   statusText.style = new TextStyle({ ...BASE_STYLE, fill: color });
+}
+
+function showGameOver(): void {
+  gameOverLayer.removeChildren();
+  const w = app.screen.width;
+  const h = app.screen.height;
+
+  const bg = new Graphics();
+  bg.setFillStyle({ color: 0x000000, alpha: 0.65 });
+  bg.rect(0, 0, w, h);
+  bg.fill();
+  gameOverLayer.addChild(bg);
+
+  const title = makeText("GAME OVER", { fill: 0xff4444, fontSize: 42, fontWeight: "bold" });
+  title.anchor.set(0.5);
+  title.x = w / 2;
+  title.y = 50;
+  gameOverLayer.addChild(title);
+
+  const localPlayer = localId ? players.get(localId) : undefined;
+  const scoreText = makeText(
+    `Score: ${localPlayer?.score ?? 0}`,
+    { fill: 0xffffff, fontSize: 24 },
+  );
+  scoreText.anchor.set(0.5);
+  scoreText.x = w / 2;
+  scoreText.y = 95;
+  gameOverLayer.addChild(scoreText);
+
+  const mapSize = Math.min(w, h) * 0.45;
+  const mapX = w / 2;
+  const mapY = h / 2 + 5;
+  const mapR = mapSize / 2;
+
+  const mapBg = new Graphics();
+  mapBg.setStrokeStyle({ color: 0x334466, width: 1 });
+  mapBg.circle(mapX, mapY, mapR);
+  mapBg.stroke();
+  gameOverLayer.addChild(mapBg);
+
+  const mapGfx = new Graphics();
+
+  for (const [eid, ep] of players) {
+    if (ep.currentPos.z <= 0) continue;
+    const sx = (ep.currentPos.x / RADIUS) * mapR * 0.85;
+    const sy = (ep.currentPos.y / RADIUS) * mapR * 0.85;
+    if (Math.sqrt(sx * sx + sy * sy) > mapR - 4) continue;
+    const color = eid === localId ? 0xffff00 : ep.isNPC ? 0x88ff88 : 0x44ddff;
+    const a = Math.atan2(ep.forward.x, ep.forward.y);
+    const sz = 4;
+    const tipX = mapX + sx + Math.sin(a) * sz;
+    const tipY = mapY + sy - Math.cos(a) * sz;
+    const lx = mapX + sx + Math.sin(a + 2.3) * sz * 0.55;
+    const ly = mapY + sy - Math.cos(a + 2.3) * sz * 0.55;
+    const rx = mapX + sx + Math.sin(a - 2.3) * sz * 0.55;
+    const ry = mapY + sy - Math.cos(a - 2.3) * sz * 0.55;
+    mapGfx.setFillStyle({ color, alpha: 0.9 });
+    mapGfx.poly([tipX, tipY, lx, ly, rx, ry]);
+    mapGfx.fill();
+  }
+
+  for (const apos of asteroidPos.values()) {
+    if (apos.z <= 0) continue;
+    const sx = (apos.x / RADIUS) * mapR * 0.85;
+    const sy = (apos.y / RADIUS) * mapR * 0.85;
+    if (Math.sqrt(sx * sx + sy * sy) > mapR - 4) continue;
+    mapGfx.setFillStyle({ color: 0xff6644, alpha: 0.6 });
+    mapGfx.circle(mapX + sx, mapY + sy, 2);
+    mapGfx.fill();
+  }
+
+  for (const bpos of bulletPos.values()) {
+    if (bpos.z <= 0) continue;
+    const sx = (bpos.x / RADIUS) * mapR * 0.85;
+    const sy = (bpos.y / RADIUS) * mapR * 0.85;
+    if (Math.sqrt(sx * sx + sy * sy) > mapR - 4) continue;
+    mapGfx.setFillStyle({ color: 0xffffff, alpha: 0.5 });
+    mapGfx.circle(mapX + sx, mapY + sy, 1);
+    mapGfx.fill();
+  }
+
+  gameOverLayer.addChild(mapGfx);
+
+  const btn = makeText("[ Click to Respawn ]", { fill: 0x44ddff, fontSize: 20 });
+  btn.anchor.set(0.5);
+  btn.x = w / 2;
+  btn.y = h - 60;
+  btn.eventMode = "static";
+  btn.cursor = "pointer";
+  btn.on("pointertap", () => {
+    ws.send(JSON.stringify({ type: "restart" }));
+  });
+  gameOverLayer.addChild(btn);
+
+  gameOverLayer.visible = true;
+}
+
+function hideGameOver(): void {
+  gameOverLayer.visible = false;
 }
 
 app.ticker.add(() => {
@@ -541,6 +643,7 @@ function ensurePlayer(id: string, name?: string): PlayerEntry {
     score: 0,
     lives: 3,
     name: displayName,
+    isNPC: id.startsWith('npc_'),
   };
   players.set(id, entry);
   return entry;
@@ -759,6 +862,7 @@ function handleMessage(e: MessageEvent): void {
         if (id === localId) {
           localLives = lives;
           updateLivesDisplay();
+          if (lives === 0) showGameOver();
         }
       }
       refreshScoreboard();
@@ -780,6 +884,7 @@ function handleMessage(e: MessageEvent): void {
         if (id === localId) {
           localLives = lives;
           updateLivesDisplay();
+          hideGameOver();
         }
       }
       p.sprite.visible = true;

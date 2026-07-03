@@ -14,8 +14,6 @@ const UP: Vec3 = { x: 0, y: 0, z: 1 };
 describe("npcAI", () => {
   function makeNpc(): NpcInput {
     return {
-      aiRotateDir: 0,
-      aiSwitchTimer: 2,
       aiThrustTimer: 2,
       rotateLeft: false,
       rotateRight: false,
@@ -32,44 +30,11 @@ describe("npcAI", () => {
     expect(n.brake).toBe(false);
   });
 
-  it("decrements aiSwitchTimer when not steering", () => {
-    const n = makeNpc();
-    n.aiSwitchTimer = 5;
-    npcAI(n, 1 / 30, [], ZERO, UP);
-    expect(n.aiSwitchTimer).toBeLessThan(5);
-    expect(n.aiSwitchTimer).toBeGreaterThan(4.9);
-  });
-
-  it("picks new wander rotation when timer expires", () => {
-    const n = makeNpc();
-    n.aiSwitchTimer = 0.01;
-    const rand = vi.spyOn(Math, "random");
-    rand.mockReturnValue(0.05);
-    npcAI(n, 0.02, [], ZERO, UP);
-    expect(n.aiRotateDir).toBe(-1);
-    expect(n.rotateLeft).toBe(true);
-    expect(n.rotateRight).toBe(false);
-    expect(n.aiSwitchTimer).toBeGreaterThan(2);
-    rand.mockRestore();
-  });
-
-  it("sets rotateRight when wander random < 0.2", () => {
-    const n = makeNpc();
-    n.aiSwitchTimer = 0.01;
-    const rand = vi.spyOn(Math, "random");
-    rand.mockReturnValue(0.15);
-    npcAI(n, 0.02, [], ZERO, UP);
-    expect(n.aiRotateDir).toBe(1);
-    expect(n.rotateRight).toBe(true);
-    expect(n.rotateLeft).toBe(false);
-    rand.mockRestore();
-  });
-
   it("steers left away from ship on the right", () => {
     const n = makeNpc();
     const pos: Vec3 = { x: 0, y: 0, z: 1000 };
     const fwd: Vec3 = { x: 0, y: 1, z: 0 };
-    const nearby: BoidInfluence[] = [{ pos: { x: 30, y: 0, z: 1000 }, repel: true, range: 100, strength: 1 }];
+    const nearby: BoidInfluence[] = [{ pos: { x: 30, y: 0, z: 1000 }, repel: true, range: 60, strength: 1 }];
     npcAI(n, 1 / 30, nearby, pos, fwd);
     expect(n.rotateLeft).toBe(true);
     expect(n.rotateRight).toBe(false);
@@ -79,19 +44,17 @@ describe("npcAI", () => {
     const n = makeNpc();
     const pos: Vec3 = { x: 0, y: 0, z: 1000 };
     const fwd: Vec3 = { x: 0, y: 1, z: 0 };
-    const nearby: BoidInfluence[] = [{ pos: { x: -30, y: 0, z: 1000 }, repel: true, range: 100, strength: 1 }];
+    const nearby: BoidInfluence[] = [{ pos: { x: -30, y: 0, z: 1000 }, repel: true, range: 60, strength: 1 }];
     npcAI(n, 1 / 30, nearby, pos, fwd);
     expect(n.rotateRight).toBe(true);
     expect(n.rotateLeft).toBe(false);
   });
 
-  it("does not rotate when no nearby ships and timer not expired", () => {
+  it("does not rotate when no influences", () => {
     const n = makeNpc();
-    n.aiRotateDir = 1;
-    n.aiSwitchTimer = 5;
     npcAI(n, 1 / 30, [], ZERO, UP);
-    expect(n.aiRotateDir).toBe(1);
-    expect(n.rotateRight).toBe(true);
+    expect(n.rotateLeft).toBe(false);
+    expect(n.rotateRight).toBe(false);
   });
 
   it("toggles thrust to true on burst timer", () => {

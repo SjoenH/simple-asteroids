@@ -95,8 +95,6 @@ export function initialTangent(pos: Vec3): Vec3 {
 }
 
 export interface NpcInput {
-  aiRotateDir: number;
-  aiSwitchTimer: number;
   aiThrustTimer: number;
   rotateLeft: boolean;
   rotateRight: boolean;
@@ -144,18 +142,12 @@ export function npcAI(
 ): void {
   const steerAngle = boidsSteer(pos, fwd, influences);
 
-  if (Math.abs(steerAngle) > 0.15) {
+  if (Math.abs(steerAngle) > 0.4) {
     input.rotateLeft = steerAngle < 0;
     input.rotateRight = steerAngle > 0;
   } else {
-      input.aiSwitchTimer -= dt;
-    if (input.aiSwitchTimer <= 0) {
-      const r = Math.random();
-      input.aiRotateDir = r < 0.1 ? -1 : r < 0.2 ? 1 : 0;
-      input.aiSwitchTimer = 3 + Math.random() * 5;
-    }
-    input.rotateLeft = input.aiRotateDir === -1;
-    input.rotateRight = input.aiRotateDir === 1;
+    input.rotateLeft = false;
+    input.rotateRight = false;
   }
 
   input.aiThrustTimer -= dt;

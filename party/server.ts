@@ -115,8 +115,6 @@ interface PlayerState {
   invisibilityTimer: number;
   multiCannonTimer: number;
   isNPC: boolean;
-  aiRotateDir: number;
-  aiSwitchTimer: number;
   aiThrustTimer: number;
 }
 
@@ -178,8 +176,6 @@ export class GameServer extends Server {
       invisibilityTimer: 0,
       multiCannonTimer: 0,
       isNPC: false,
-      aiRotateDir: 0,
-      aiSwitchTimer: 0,
       aiThrustTimer: 0,
     };
     this.players.set(connection.id, player);
@@ -242,6 +238,11 @@ export class GameServer extends Server {
         player.rotateLeft = Boolean(data.rotateLeft);
         player.rotateRight = Boolean(data.rotateRight);
         player.shoot = Boolean(data.shoot);
+        break;
+      case "restart":
+        if (player.actor.getSnapshot().matches("gameOver")) {
+          this.respawnPlayer(connection.id, true);
+        }
         break;
     }
   }
@@ -318,10 +319,6 @@ export class GameServer extends Server {
     player.invisibilityTimer = 0;
     player.multiCannonTimer = 0;
     player.shootCooldown = player.isNPC ? Math.random() * SHOOT_COOLDOWN : 0;
-    if (player.isNPC) {
-      player.aiRotateDir = Math.random() < 0.5 ? -1 : 1;
-      player.aiSwitchTimer = 1 + Math.random() * 3;
-    }
     this.broadcast(
       JSON.stringify({
         type: "playerRespawned",
@@ -356,8 +353,6 @@ export class GameServer extends Server {
       invisibilityTimer: 0,
       multiCannonTimer: 0,
       isNPC: true,
-      aiRotateDir: Math.random() < 0.5 ? -1 : 1,
-      aiSwitchTimer: 1 + Math.random() * 3,
       aiThrustTimer: Math.random() * 3,
     };
     this.players.set(id, player);
@@ -377,35 +372,34 @@ export class GameServer extends Server {
         for (const [oid, o] of this.players) {
           if (oid === id || !o.actor.getSnapshot().matches("alive")) continue;
           const d = vLen(vSub(p.pos, o.pos));
-          if (d < 100) {
-            influences.push({ pos: o.pos, repel: true, range: 100, strength: 1 });
+          if (d < 60) {
+            influences.push({ pos: o.pos, repel: true, range: 60, strength: 1 });
           }
         }
 
-        // Follow/avoid local players
         for (const [, o] of this.players) {
           if (o.isNPC || !o.actor.getSnapshot().matches("alive")) continue;
           const d = vLen(vSub(p.pos, o.pos));
-          if (d < 400) {
-            if (d < 80) {
-              influences.push({ pos: o.pos, repel: true, range: 80, strength: 2 });
+          if (d < 200) {
+            if (d < 40) {
+              influences.push({ pos: o.pos, repel: true, range: 40, strength: 2 });
             } else {
-              influences.push({ pos: o.pos, repel: false, range: 400, strength: 1.5 });
+              influences.push({ pos: o.pos, repel: false, range: 200, strength: 1.5 });
             }
           }
         }
 
         for (const [, b] of this.bullets) {
           const d = vLen(vSub(p.pos, b.pos));
-          if (d < 100) {
-            influences.push({ pos: b.pos, repel: true, range: 100, strength: 3 });
+          if (d < 60) {
+            influences.push({ pos: b.pos, repel: true, range: 60, strength: 3 });
           }
         }
 
         for (const [, a] of this.asteroids) {
           const d = vLen(vSub(p.pos, a.pos));
-          if (d < 60) {
-            influences.push({ pos: a.pos, repel: true, range: 60, strength: 2 });
+          if (d < 40) {
+            influences.push({ pos: a.pos, repel: true, range: 40, strength: 2 });
           }
         }
 
@@ -559,7 +553,7 @@ export class GameServer extends Server {
           const livesLeft = p.actor.getSnapshot().context.lives;
           this.broadcast(JSON.stringify({ type: "playerKilled", id: pid, lives: livesLeft }));
           if (p.actor.getSnapshot().matches("gameOver")) {
-            setTimeout(() => this.respawnPlayer(pid, true), GAME_OVER_RESPAWN_DELAY * 1000);
+            if (p.isNPC) setTimeout(() => this.respawnPlayer(pid, true), GAME_OVER_RESPAWN_DELAY * 1000);
           } else {
             setTimeout(() => this.respawnPlayer(pid, false), RESPAWN_DELAY * 1000);
           }
@@ -618,7 +612,7 @@ export class GameServer extends Server {
           this.broadcast(JSON.stringify({ type: "playerKilled", id: pid, lives: livesLeft }));
 
           if (p.actor.getSnapshot().matches("gameOver")) {
-            setTimeout(() => this.respawnPlayer(pid, true), GAME_OVER_RESPAWN_DELAY * 1000);
+            if (p.isNPC) setTimeout(() => this.respawnPlayer(pid, true), GAME_OVER_RESPAWN_DELAY * 1000);
           } else {
             setTimeout(() => this.respawnPlayer(pid, false), RESPAWN_DELAY * 1000);
           }
