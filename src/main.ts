@@ -66,12 +66,11 @@ function radToScreen(q: Vec3, p: Vec3, fwd: Vec3): { x: number; y: number } | nu
 }
 
 function forwardScreenAngle(pos: Vec3, fwd: Vec3, pp: Vec3, pf: Vec3): number {
-  const n = vNorm(pp);
-  const right = vNorm(vCross(pf, n));
-  const fwdProj = vNorm(tangentOf(fwd, n));
-  const sx = vDot(fwdProj, right);
-  const sy = -vDot(fwdProj, pf);
-  return Math.atan2(sx, sy);
+  const step = vAdd(pos, vScale(fwd, 20));
+  const s1 = radToScreen(pos, pp, pf);
+  const s2 = radToScreen(step, pp, pf);
+  if (!s1 || !s2) return 0;
+  return Math.atan2(s2.x - s1.x, -(s2.y - s1.y));
 }
 
 const PEER_COLORS: number[] = [
