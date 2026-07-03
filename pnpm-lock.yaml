@@ -17,6 +17,9 @@ importers:
       pixi.js:
         specifier: ^8.19.0
         version: 8.19.0
+      xstate:
+        specifier: ^5.32.3
+        version: 5.32.3
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260702.1
@@ -907,6 +910,9 @@ packages:
       utf-8-validate:
         optional: true
 
+  xstate@5.32.3:
+    resolution: {integrity: sha512-I8PDV+D9f5iuAGR/CjiQwf/7A+iiSWHsd16jWe/2Z1GQh4T4JQBYvpauqBK+SAU3TegOBtTvxcqAjhJnqeT0sg==}
+
   y18n@5.0.8:
     resolution: {integrity: sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==}
     engines: {node: '>=10'}
@@ -1572,6 +1578,8 @@ snapshots:
       strip-ansi: 7.2.0
 
   ws@8.21.0: {}
+
+  xstate@5.32.3: {}
 
   y18n@5.0.8: {}
 

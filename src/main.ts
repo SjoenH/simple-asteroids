@@ -5,6 +5,7 @@ import {
   Application,
   Assets,
   Container,
+  Graphics,
   Sprite,
   Text,
   TextStyle,
@@ -17,8 +18,52 @@ const ASSET_PATHS = {
   player: '/assets/Player.png',
   asteroid: '/assets/Asteroid.png',
   bullet: '/assets/Bullet.png',
-  star: '/assets/Star.png',
 } as const;
+
+interface Vec3 { x: number; y: number; z: number; }
+
+function vAdd(a: Vec3, b: Vec3): Vec3 {
+  return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
+}
+function vSub(a: Vec3, b: Vec3): Vec3 {
+  return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+}
+function vScale(v: Vec3, s: number): Vec3 {
+  return { x: v.x * s, y: v.y * s, z: v.z * s };
+}
+function vDot(a: Vec3, b: Vec3): number {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+function vCross(a: Vec3, b: Vec3): Vec3 {
+  return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x };
+}
+function vLen(v: Vec3): number {
+  return Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+}
+function vNorm(v: Vec3): Vec3 {
+  const l = vLen(v);
+  return l === 0 ? { x: 0, y: 0, z: 1 } : vScale(v, 1 / l);
+}
+
+function tangentOf(v: Vec3, n: Vec3): Vec3 {
+  const u = vNorm(n);
+  return vSub(v, vScale(u, vDot(v, u)));
+}
+
+function radToScreen(q: Vec3, p: Vec3, fwd: Vec3): { x: number; y: number } | null {
+  const n = vNorm(p);
+  const cosAngle = Math.max(-1, Math.min(1, vDot(vNorm(q), n)));
+  const angle = Math.acos(cosAngle);
+  if (angle > Math.PI / 2) return null;
+  const d = vSub(q, p);
+  const dTan = tangentOf(d, n);
+  const dTanLen = vLen(dTan);
+  if (dTanLen < 0.001) return { x: 0, y: 0 };
+  const dir = vScale(dTan, 1 / dTanLen);
+  const screenDist = angle * vLen(p);
+  const right = vNorm(vCross(fwd, n));
+  return { x: vDot(dir, right) * screenDist, y: -vDot(dir, fwd) * screenDist };
+}
 
 const PEER_COLORS: number[] = [
   0x00ff88, 0xff44ff, 0x44ddff, 0xff8800, 0xaaaaff, 0xff4455,
@@ -28,15 +73,28 @@ interface PlayerEntry {
   container: Container;
   sprite: Sprite;
   label: Text;
-  targetX: number;
-  targetY: number;
+  targetPos: Vec3;
+  currentPos: Vec3;
+  forward: Vec3;
   score: number;
+  lives: number;
   name: string;
+}
+
+type PowerUpType = 'extraLife' | 'invisibility' | 'multiCannon';
+
+interface PowerUpEntry {
+  gfx: Graphics;
+  pos: Vec3;
+  type: PowerUpType;
 }
 
 const players = new Map<string, PlayerEntry>();
 const asteroids = new Map<string, Sprite>();
 const bullets = new Map<string, Sprite>();
+const asteroidPos = new Map<string, Vec3>();
+const bulletPos = new Map<string, Vec3>();
+const powerUps = new Map<string, PowerUpEntry>();
 
 let localId: string | null = null;
 let playerName = '';
@@ -54,27 +112,55 @@ document.body.appendChild(app.canvas);
 
 await Assets.load(Object.values(ASSET_PATHS));
 
-const starsLayer = new Container();
-const gameLayer = new Container();
-const hudLayer = new Container();
-app.stage.addChild(starsLayer, gameLayer, hudLayer);
+const RADIUS = 1000;
 
-const starSprites: Sprite[] = [];
-
-function buildStarfield(): void {
-  for (let i = 0; i < 160; i++) {
-    const s = Sprite.from(ASSET_PATHS.star);
-    s.anchor.set(0.5);
-    s.x = Math.random() * app.screen.width;
-    s.y = Math.random() * app.screen.height;
-    s.scale.set(Math.random() * 0.22 + 0.04);
-    s.alpha = Math.random() * 0.6 + 0.15;
-    starsLayer.addChild(s);
-    starSprites.push(s);
-  }
+function getZoom(): number {
+  return Math.max(0.35, Math.min(app.screen.width, app.screen.height) / 900);
 }
 
-buildStarfield();
+const gameLayer = new Container();
+const hudLayer = new Container();
+const particleLayer = new Container();
+gameLayer.addChildAt(particleLayer, 0);
+app.stage.addChild(gameLayer, hudLayer);
+
+interface AmbientParticle {
+  pos: Vec3;
+  size: number;
+  alpha: number;
+}
+
+const ambientParticles: AmbientParticle[] = [];
+for (let i = 0; i < 400; i++) {
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.acos(2 * Math.random() - 1);
+  const r = RADIUS * (0.6 + Math.random() * 0.5);
+  ambientParticles.push({
+    pos: {
+      x: r * Math.sin(phi) * Math.cos(theta),
+      y: r * Math.sin(phi) * Math.sin(theta),
+      z: r * Math.cos(phi),
+    },
+    size: Math.random() * 1.8 + 0.3,
+    alpha: Math.random() * 0.75 + 0.05,
+  });
+}
+
+interface ExhaustParticle {
+  pos: Vec3;
+  vel: Vec3;
+  life: number;
+  maxLife: number;
+}
+
+const exhaustParticles: ExhaustParticle[] = [];
+
+const ambientGFX = new Graphics();
+const exhaustGFX = new Graphics();
+const powerUpGFX = new Graphics();
+particleLayer.addChild(ambientGFX, exhaustGFX, powerUpGFX);
+
+
 
 const BASE_STYLE: Partial<TextStyle> = {
   fontFamily: 'monospace',
@@ -98,7 +184,7 @@ fpsText.position.set(10, 28);
 hudLayer.addChild(fpsText);
 
 const controlsText = makeText(
-  'WASD / ↑←↓→ — fly   SPACE — shoot',
+  'WASD / ↑←↓→ — fly   SPACE — shoot   S/↓ — brake',
   { fontSize: 11, fill: 0x445566 },
 );
 controlsText.anchor.set(0.5, 1);
@@ -107,6 +193,29 @@ hudLayer.addChild(controlsText);
 const scoreContainer = new Container();
 scoreContainer.position.set(10, 50);
 hudLayer.addChild(scoreContainer);
+
+const livesLabel = makeText('', { fill: 0xff4444, fontSize: 14 });
+livesLabel.position.set(10, 50);
+hudLayer.addChild(livesLabel);
+
+const effectLabel = makeText('', { fill: 0x44ff88, fontSize: 12 });
+effectLabel.position.set(10, 70);
+hudLayer.addChild(effectLabel);
+
+let localLives = 3;
+let localEffects: string[] = [];
+
+function updateLivesDisplay(): void {
+  livesLabel.text = '♥'.repeat(Math.max(0, localLives));
+  livesLabel.style = new TextStyle({
+    ...BASE_STYLE, fontSize: 14,
+    fill: localLives > 0 ? 0xff4444 : 0x444444,
+  });
+}
+
+function updateEffectDisplay(): void {
+  effectLabel.text = localEffects.join('  ');
+}
 
 function positionHUD(): void {
   controlsText.x = app.screen.width / 2;
@@ -120,8 +229,9 @@ function refreshScoreboard(): void {
   let y = 0;
   for (const [id, p] of players) {
     const isMe = id === localId;
+    const livesStr = '♥'.repeat(Math.max(0, p.lives));
     const entry = makeText(
-      `${isMe ? '▶' : ' '} ${p.name}  ${p.score}`,
+      `${isMe ? '▶' : ' '} ${p.name}  ${p.score}  ${livesStr}`,
       { fontSize: 12, fill: isMe ? 0xffff00 : 0x888899 },
     );
     entry.y = y;
@@ -138,15 +248,110 @@ function setStatus(text: string, color: number): void {
 app.ticker.add(() => {
   fpsText.text = `FPS: ${Math.round(app.ticker.FPS)}`;
 
-  if (Math.random() < 0.4) {
-    const s = starSprites[Math.floor(Math.random() * starSprites.length)];
-    s.alpha = Math.random() * 0.6 + 0.15;
+  const localPlayer = localId ? players.get(localId) : undefined;
+  const pp = localPlayer?.currentPos ?? { x: 0, y: 0, z: RADIUS };
+  const pf = localPlayer?.forward ?? { x: 0, y: 0, z: 1 };
+
+  // ── Stars (ambient particles) ──
+  ambientGFX.clear();
+  for (const ap of ambientParticles) {
+    const s = radToScreen(ap.pos, pp, pf);
+    if (!s) continue;
+    ambientGFX.setFillStyle({ color: 0xffffff, alpha: ap.alpha });
+    ambientGFX.circle(s.x, s.y, ap.size);
+    ambientGFX.fill();
   }
 
-  for (const p of players.values()) {
-    p.container.x += (p.targetX - p.container.x) * 0.18;
-    p.container.y += (p.targetY - p.container.y) * 0.18;
+  // ── Exhaust particles ──
+  exhaustGFX.clear();
+  exhaustGFX.setFillStyle({ color: 0xffaa44, alpha: 0.35 });
+  const isThrusting = keys.has('KeyW') || keys.has('ArrowUp');
+  if (isThrusting && localPlayer && exhaustParticles.length < 120) {
+    const back = vScale(pf, -1);
+    const n = vNorm(pp);
+    const perp = vNorm(vCross(back, n));
+    for (let i = 0; i < 4; i++) {
+      const spread = vAdd(
+        vScale(perp, (Math.random() - 0.5) * 12),
+        vScale(back, Math.random() * 10 + 5),
+      );
+      exhaustParticles.push({
+        pos: vAdd(pp, spread),
+        vel: vAdd(vScale(back, Math.random() * 60 + 30), vScale(perp, (Math.random() - 0.5) * 30)),
+        life: 1,
+        maxLife: 0.5 + Math.random() * 0.4,
+      });
+    }
   }
+
+  for (let i = exhaustParticles.length - 1; i >= 0; i--) {
+    const ep = exhaustParticles[i];
+    ep.pos = vAdd(ep.pos, vScale(ep.vel, 1 / 60));
+    ep.vel = vScale(ep.vel, 0.97);
+    ep.life -= 1 / 60;
+    if (ep.life <= 0) {
+      exhaustParticles.splice(i, 1);
+      continue;
+    }
+    const s = radToScreen(ep.pos, pp, pf);
+    if (!s) continue;
+    const a = (ep.life / ep.maxLife);
+    exhaustGFX.circle(s.x, s.y, 3 * a);
+  }
+  exhaustGFX.fill();
+
+  // ── Power-up pickups ──
+  powerUpGFX.clear();
+  for (const [, pu] of powerUps) {
+    const s = radToScreen(pu.pos, pp, pf);
+    if (!s) continue;
+    let color = 0xffffff;
+    if (pu.type === 'extraLife') color = 0x44ff44;
+    else if (pu.type === 'invisibility') color = 0xaa44ff;
+    else if (pu.type === 'multiCannon') color = 0xff8800;
+    powerUpGFX.setFillStyle({ color, alpha: 0.7 });
+    powerUpGFX.circle(s.x, s.y, 7);
+  }
+  powerUpGFX.fill();
+
+  for (const p of players.values()) {
+    p.currentPos.x += (p.targetPos.x - p.currentPos.x) * 0.18;
+    p.currentPos.y += (p.targetPos.y - p.currentPos.y) * 0.18;
+    p.currentPos.z += (p.targetPos.z - p.currentPos.z) * 0.18;
+    const screen = radToScreen(p.currentPos, pp, pf);
+    if (screen) {
+      p.container.x = screen.x;
+      p.container.y = screen.y;
+    }
+    p.container.visible = screen !== null;
+  }
+
+  for (const [id, s] of asteroids) {
+    const pos = asteroidPos.get(id);
+    if (!pos) continue;
+    const screen = radToScreen(pos, pp, pf);
+    if (screen) {
+      s.x = screen.x;
+      s.y = screen.y;
+    }
+    s.visible = screen !== null;
+  }
+
+  for (const [id, s] of bullets) {
+    const pos = bulletPos.get(id);
+    if (!pos) continue;
+    const screen = radToScreen(pos, pp, pf);
+    if (screen) {
+      s.x = screen.x;
+      s.y = screen.y;
+    }
+    s.visible = screen !== null;
+  }
+
+  const zoom = getZoom();
+  gameLayer.x = app.screen.width / 2;
+  gameLayer.y = app.screen.height / 2;
+  gameLayer.scale.set(zoom);
 });
 
 function colorForIndex(index: number): number {
@@ -177,8 +382,11 @@ function ensurePlayer(id: string, name?: string): PlayerEntry {
 
   const entry: PlayerEntry = {
     container, sprite, label,
-    targetX: 0, targetY: 0,
+    targetPos: { x: 0, y: 0, z: RADIUS },
+    currentPos: { x: 0, y: 0, z: RADIUS },
+    forward: { x: 0, y: 0, z: 1 },
     score: 0,
+    lives: 3,
     name: displayName,
   };
   players.set(id, entry);
@@ -192,26 +400,23 @@ function dropPlayer(id: string): void {
   players.delete(id);
 }
 
-function movePlayer(id: string, x: number, y: number, rotation?: number): void {
+function movePlayer(id: string, pos: Vec3, forward?: Vec3): void {
   const p = ensurePlayer(id);
-  p.targetX = x;
-  p.targetY = y;
-  if (rotation !== undefined) p.sprite.rotation = rotation + Math.PI / 2;
+  p.targetPos = pos;
+  if (forward) p.forward = forward;
 }
 
 const ASTEROID_SCALES: Record<number, number> = { 1: 1, 2: 0.6, 3: 0.35 };
 
-function ensureAsteroid(id: string, x: number, y: number, size?: number): void {
+function ensureAsteroid(id: string, pos: Vec3, size?: number): void {
   if (!asteroids.has(id)) {
     const s = Sprite.from(ASSET_PATHS.asteroid);
     s.anchor.set(0.5);
     gameLayer.addChildAt(s, 0);
     asteroids.set(id, s);
   }
-  const s = asteroids.get(id) as Sprite;
-  s.x = x;
-  s.y = y;
-  if (size !== undefined) s.scale.set(ASTEROID_SCALES[size] ?? 1);
+  asteroidPos.set(id, pos);
+  if (size !== undefined) asteroids.get(id)!.scale.set(ASTEROID_SCALES[size] ?? 1);
 }
 
 function dropAsteroid(id: string): void {
@@ -219,9 +424,10 @@ function dropAsteroid(id: string): void {
   if (!s) return;
   gameLayer.removeChild(s);
   asteroids.delete(id);
+  asteroidPos.delete(id);
 }
 
-function ensureBullet(id: string, x: number, y: number, rotation?: number): void {
+function ensureBullet(id: string, pos: Vec3): void {
   if (!bullets.has(id)) {
     const s = Sprite.from(ASSET_PATHS.bullet);
     s.anchor.set(0.5);
@@ -229,10 +435,7 @@ function ensureBullet(id: string, x: number, y: number, rotation?: number): void
     gameLayer.addChildAt(s, 0);
     bullets.set(id, s);
   }
-  const s = bullets.get(id) as Sprite;
-  s.x = x;
-  s.y = y;
-  if (rotation !== undefined) s.rotation = rotation + Math.PI / 2;
+  bulletPos.set(id, pos);
 }
 
 function dropBullet(id: string): void {
@@ -240,6 +443,7 @@ function dropBullet(id: string): void {
   if (!s) return;
   gameLayer.removeChild(s);
   bullets.delete(id);
+  bulletPos.delete(id);
 }
 
 const keys = new Set<string>();
@@ -290,6 +494,7 @@ function sendInput(): void {
   lastInputSent = now;
 
   const thrust = keys.has('KeyW') || keys.has('ArrowUp');
+  const brake = keys.has('KeyS') || keys.has('ArrowDown');
   const rotateLeft = keys.has('KeyA') || keys.has('ArrowLeft');
   const rotateRight = keys.has('KeyD') || keys.has('ArrowRight');
   const shoot = keys.has('Space');
@@ -297,6 +502,7 @@ function sendInput(): void {
   ws.send(JSON.stringify({
     type: 'playerInput',
     thrust,
+    brake,
     rotateLeft,
     rotateRight,
     shoot,
@@ -320,6 +526,8 @@ function handleMessage(e: MessageEvent): void {
   switch (data.type) {
     case 'connected':
       localId = data.id as string;
+      localLives = (data.lives as number) ?? 3;
+      updateLivesDisplay();
       break;
 
     case 'playerJoined': {
@@ -350,19 +558,20 @@ function handleMessage(e: MessageEvent): void {
 
     case 'playerMoved': {
       const id = data.id as string;
-      const x = data.x as number;
-      const y = data.y as number;
-      const rotation = data.rotation as number | undefined;
-      movePlayer(id, x, y, rotation);
+      const pos: Vec3 = { x: data.x as number, y: data.y as number, z: data.z as number };
+      const forward: Vec3 | undefined =
+        data.fx !== undefined
+          ? { x: data.fx as number, y: data.fy as number, z: data.fz as number }
+          : undefined;
+      movePlayer(id, pos, forward);
       break;
     }
 
     case 'asteroidMoved': {
       const id = data.id as string;
-      const x = data.x as number;
-      const y = data.y as number;
+      const pos: Vec3 = { x: data.x as number, y: data.y as number, z: data.z as number };
       const size = data.size as number | undefined;
-      ensureAsteroid(id, x, y, size);
+      ensureAsteroid(id, pos, size);
       break;
     }
 
@@ -374,10 +583,8 @@ function handleMessage(e: MessageEvent): void {
 
     case 'bulletMoved': {
       const id = data.id as string;
-      const x = data.x as number;
-      const y = data.y as number;
-      const rotation = data.rotation as number | undefined;
-      ensureBullet(id, x, y, rotation);
+      const pos: Vec3 = { x: data.x as number, y: data.y as number, z: data.z as number };
+      ensureBullet(id, pos);
       break;
     }
 
@@ -393,18 +600,38 @@ function handleMessage(e: MessageEvent): void {
       if (!p) return;
       p.sprite.visible = false;
       p.label.text = '💀';
+      const lives = data.lives as number | undefined;
+      if (lives !== undefined) {
+        p.lives = lives;
+        if (id === localId) {
+          localLives = lives;
+          updateLivesDisplay();
+        }
+      }
+      refreshScoreboard();
       break;
     }
 
     case 'playerRespawned': {
       const id = data.id as string;
-      const x = data.x as number;
-      const y = data.y as number;
+      const pos: Vec3 = { x: data.x as number, y: data.y as number, z: data.z as number };
       const p = ensurePlayer(id);
-      p.container.x = p.targetX = x;
-      p.container.y = p.targetY = y;
+      p.targetPos = { ...pos };
+      p.currentPos = { ...pos };
+      if (data.fx !== undefined) {
+        p.forward = { x: data.fx as number, y: data.fy as number, z: data.fz as number };
+      }
+      const lives = data.lives as number | undefined;
+      if (lives !== undefined) {
+        p.lives = lives;
+        if (id === localId) {
+          localLives = lives;
+          updateLivesDisplay();
+        }
+      }
       p.sprite.visible = true;
       p.label.text = p.name;
+      refreshScoreboard();
       break;
     }
 
@@ -415,6 +642,61 @@ function handleMessage(e: MessageEvent): void {
       if (!p) return;
       p.score = score;
       refreshScoreboard();
+      break;
+    }
+
+    case 'powerUpSpawned': {
+      const id = data.id as string;
+      const pos: Vec3 = { x: data.x as number, y: data.y as number, z: data.z as number };
+      const puType = data.puType as PowerUpType;
+      const gfx = new Graphics();
+      powerUps.set(id, { gfx, pos, type: puType });
+      break;
+    }
+
+    case 'powerUpCollected':
+    case 'powerUpExpired': {
+      const id = data.id as string;
+      const pu = powerUps.get(id);
+      if (pu) {
+        pu.gfx.destroy();
+        powerUps.delete(id);
+      }
+      break;
+    }
+
+    case 'livesChanged': {
+      const id = data.id as string;
+      const lives = data.lives as number;
+      const p = players.get(id);
+      if (p) {
+        p.lives = lives;
+        if (id === localId) {
+          localLives = lives;
+          updateLivesDisplay();
+        }
+      }
+      refreshScoreboard();
+      break;
+    }
+
+    case 'effectActivated': {
+      const id = data.id as string;
+      const effect = data.effect as string;
+      if (id === localId) {
+        localEffects.push(effect);
+        updateEffectDisplay();
+      }
+      break;
+    }
+
+    case 'effectExpired': {
+      const id = data.id as string;
+      const effect = data.effect as string;
+      if (id === localId) {
+        localEffects = localEffects.filter(e => e !== effect);
+        updateEffectDisplay();
+      }
       break;
     }
   }
