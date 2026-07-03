@@ -373,7 +373,6 @@ function updateDebugViews(camPP: Vec3, camPF: Vec3): void {
 
   if (players.size === 0) return;
 
-  const viewSize = 100;
   const screenW = app.screen.width;
   const screenH = app.screen.height;
   const hw = screenW / 2;
@@ -382,6 +381,9 @@ function updateDebugViews(camPP: Vec3, camPF: Vec3): void {
 
   for (const [id, p] of players) {
     if (id === localId) continue;
+
+    const dist = Math.max(0, Math.min(RADIUS * 2, vLen(vSub(p.currentPos, camPP))));
+    const viewSize = Math.round(130 - (dist / (RADIUS * 2)) * 80);
 
     const s = radToScreen(p.currentPos, camPP, camPF);
     let visible = false;
