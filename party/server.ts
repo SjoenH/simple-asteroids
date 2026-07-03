@@ -551,6 +551,7 @@ export class GameServer extends Server {
           deadBullets.push(bid);
           p.actor.send({ type: "HIT" });
           const livesLeft = p.actor.getSnapshot().context.lives;
+          if (livesLeft === 0) p.actor.send({ type: "GAME_OVER" });
           this.broadcast(JSON.stringify({ type: "playerKilled", id: pid, lives: livesLeft }));
           if (p.actor.getSnapshot().matches("gameOver")) {
             if (p.isNPC) setTimeout(() => this.respawnPlayer(pid, true), GAME_OVER_RESPAWN_DELAY * 1000);
@@ -609,6 +610,7 @@ export class GameServer extends Server {
         if (d < PLAYER_RADII[a.size]) {
           p.actor.send({ type: "HIT" });
           const livesLeft = p.actor.getSnapshot().context.lives;
+          if (livesLeft === 0) p.actor.send({ type: "GAME_OVER" });
           this.broadcast(JSON.stringify({ type: "playerKilled", id: pid, lives: livesLeft }));
 
           if (p.actor.getSnapshot().matches("gameOver")) {
