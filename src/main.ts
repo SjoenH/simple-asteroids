@@ -130,8 +130,9 @@ function getZoom(): number {
 const gameLayer = new Container();
 const hudLayer = new Container();
 const particleLayer = new Container();
+const debugContainer = new Container();
 gameLayer.addChildAt(particleLayer, 0);
-app.stage.addChild(gameLayer, hudLayer);
+app.stage.addChild(gameLayer, hudLayer, debugContainer);
 
 interface AmbientParticle {
   pos: Vec3;
@@ -364,7 +365,100 @@ app.ticker.add(() => {
   gameLayer.x = app.screen.width / 2;
   gameLayer.y = app.screen.height / 2;
   gameLayer.scale.set(zoom);
+
+  updateDebugViews();
 });
+
+function updateDebugViews(): void {
+  debugContainer.removeChildren();
+
+  if (players.size === 0) return;
+
+  const viewSize = 100;
+  const gap = 4;
+  const count = players.size;
+  const totalWidth = count * (viewSize + gap);
+  const startX = app.screen.width - totalWidth - 10;
+  const startY = 10;
+
+  let i = 0;
+  for (const [id, p] of players) {
+    const c = new Container();
+    c.x = startX + i * (viewSize + gap);
+    c.y = startY;
+
+    const bg = new Graphics();
+    bg.setFillStyle({ color: 0x000022, alpha: 0.85 });
+    bg.rect(0, 0, viewSize, viewSize);
+    bg.fill();
+    bg.setStrokeStyle({ color: 0x444488, width: 1 });
+    bg.rect(0, 0, viewSize, viewSize);
+    bg.stroke();
+    c.addChild(bg);
+
+    const label = makeText(p.name, { fontSize: 8, fill: id === localId ? 0xffff00 : 0xaaaacc });
+    label.x = 2;
+    label.y = 2;
+    c.addChild(label);
+
+    const gfx = new Graphics();
+    c.addChild(gfx);
+
+    const pp = p.currentPos;
+    const pf = p.forward;
+    const scale = 0.2;
+    const cx = viewSize / 2;
+    const cy = viewSize / 2;
+
+    for (const [eid, ep] of players) {
+      const s = radToScreen(ep.currentPos, pp, pf);
+      if (!s) continue;
+      const sx = s.x * scale + cx;
+      const sy = s.y * scale + cy;
+      if (sx < -5 || sx > viewSize + 5 || sy < -5 || sy > viewSize + 5) continue;
+      const color = eid === id ? 0xffff00 : eid === localId ? 0x44ddff : 0x88ff88;
+      gfx.setFillStyle({ color, alpha: 0.9 });
+      gfx.circle(sx, sy, 3);
+      gfx.fill();
+    }
+
+    for (const apos of asteroidPos.values()) {
+      const s = radToScreen(apos, pp, pf);
+      if (!s) continue;
+      const sx = s.x * scale + cx;
+      const sy = s.y * scale + cy;
+      if (sx < -5 || sx > viewSize + 5 || sy < -5 || sy > viewSize + 5) continue;
+      gfx.setFillStyle({ color: 0xff6644, alpha: 0.7 });
+      gfx.circle(sx, sy, 2);
+      gfx.fill();
+    }
+
+    for (const bpos of bulletPos.values()) {
+      const s = radToScreen(bpos, pp, pf);
+      if (!s) continue;
+      const sx = s.x * scale + cx;
+      const sy = s.y * scale + cy;
+      if (sx < -5 || sx > viewSize + 5 || sy < -5 || sy > viewSize + 5) continue;
+      gfx.setFillStyle({ color: 0xffffff, alpha: 0.8 });
+      gfx.circle(sx, sy, 1);
+      gfx.fill();
+    }
+
+    for (const [, pu] of powerUps) {
+      const s = radToScreen(pu.pos, pp, pf);
+      if (!s) continue;
+      const sx = s.x * scale + cx;
+      const sy = s.y * scale + cy;
+      if (sx < -5 || sx > viewSize + 5 || sy < -5 || sy > viewSize + 5) continue;
+      gfx.setFillStyle({ color: 0x44ff44, alpha: 0.7 });
+      gfx.circle(sx, sy, 2);
+      gfx.fill();
+    }
+
+    debugContainer.addChild(c);
+    i++;
+  }
+}
 
 function colorForIndex(index: number): number {
   return PEER_COLORS[index % PEER_COLORS.length];
