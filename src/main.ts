@@ -30,6 +30,7 @@ interface PlayerEntry {
   targetX: number;
   targetY: number;
   score: number;
+  name: string;
 }
 
 const players = new Map<string, PlayerEntry>();
@@ -119,7 +120,7 @@ function refreshScoreboard(): void {
   for (const [id, p] of players) {
     const isMe = id === localId;
     const entry = makeText(
-      `${isMe ? '▶' : ' '} ${id.slice(0, 8)}  ${p.score}`,
+      `${isMe ? '▶' : ' '} ${p.name}  ${p.score}`,
       { fontSize: 12, fill: isMe ? 0xffff00 : 0x888899 },
     );
     entry.y = y;
@@ -151,10 +152,11 @@ function colorForIndex(index: number): number {
   return PEER_COLORS[index % PEER_COLORS.length];
 }
 
-function ensurePlayer(id: string): PlayerEntry {
+function ensurePlayer(id: string, name?: string): PlayerEntry {
   if (players.has(id)) return players.get(id) as PlayerEntry;
 
   const isMe = id === localId;
+  const displayName = name ?? id.slice(0, 8);
 
   const container = new Container();
 
@@ -162,7 +164,7 @@ function ensurePlayer(id: string): PlayerEntry {
   sprite.anchor.set(0.5);
   sprite.tint = isMe ? 0xffff00 : colorForIndex(players.size);
 
-  const label = makeText(id.slice(0, 8), {
+  const label = makeText(displayName, {
     fontSize: 11,
     fill: isMe ? 0xffff00 : 0xddddee,
   });
@@ -176,6 +178,7 @@ function ensurePlayer(id: string): PlayerEntry {
     container, sprite, label,
     targetX: 0, targetY: 0,
     score: 0,
+    name: displayName,
   };
   players.set(id, entry);
   return entry;
@@ -317,7 +320,8 @@ function handleMessage(e: MessageEvent): void {
 
     case 'playerJoined': {
       const id = data.id as string;
-      ensurePlayer(id);
+      const name = data.name as string | undefined;
+      ensurePlayer(id, name);
       refreshScoreboard();
       break;
     }
@@ -325,6 +329,17 @@ function handleMessage(e: MessageEvent): void {
     case 'playerLeft': {
       const id = data.id as string;
       dropPlayer(id);
+      refreshScoreboard();
+      break;
+    }
+
+    case 'playerRenamed': {
+      const id = data.id as string;
+      const name = data.name as string;
+      const p = players.get(id);
+      if (!p) break;
+      p.name = name;
+      p.label.text = name;
       refreshScoreboard();
       break;
     }
@@ -384,7 +399,7 @@ function handleMessage(e: MessageEvent): void {
       p.container.x = p.targetX = x;
       p.container.y = p.targetY = y;
       p.sprite.visible = true;
-      p.label.text = id.slice(0, 8);
+      p.label.text = p.name;
       break;
     }
 

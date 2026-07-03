@@ -88,6 +88,7 @@ export default class GameServer implements Party.Server {
       JSON.stringify({
         type: "playerJoined",
         id: connection.id,
+        name: player.name,
       }),
     );
   }
@@ -107,6 +108,13 @@ export default class GameServer implements Party.Server {
     switch (data.type) {
       case "setName":
         player.name = String(data.name ?? "Unknown");
+        this.room.broadcast(
+          JSON.stringify({
+            type: "playerRenamed",
+            id: sender.id,
+            name: player.name,
+          }),
+        );
         break;
       case "playerInput":
         player.thrust = Boolean(data.thrust);
