@@ -33,7 +33,7 @@ fi
 
 # Check staged content for secret patterns
 matches=$(echo "$files" | xargs -I{} sh -c 'git show ":{}"' 2>/dev/null \
-  | grep -inE "$PATTERN" \
+  | grep -inE -- "$PATTERN" \
   | grep -v "^[0-9]*:[[:space:]]*\*" \
   | grep -v "^[0-9]*:[[:space:]]*//" \
   | grep -v "^[0-9]*:[[:space:]]*#" \
