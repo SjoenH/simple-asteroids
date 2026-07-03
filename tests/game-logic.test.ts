@@ -125,3 +125,168 @@ describe("playerMachine", () => {
     expect(INITIAL_LIVES).toBe(3);
   });
 });
+
+import { setup, assign, interpret } from "xstate";
+
+const testPlayerMachine = setup({
+  types: {
+    context: {} as { lives: number },
+    events: {} as
+      | { type: "HIT" }
+      | { type: "COLLECT_LIFE" }
+      | { type: "RESPAWN" }
+      | { type: "GAME_OVER" }
+      | { type: "RESTART" }
+      | { type: "SURRENDER" },
+  },
+  guards: {
+    hasLives: ({ context }) => context.lives > 0,
+  },
+  actions: {
+    loseLife: assign({ lives: ({ context }) => context.lives - 1 }),
+    gainLife: assign({ lives: ({ context }) => Math.min(context.lives + 1, 5) }),
+    resetLives: assign({ lives: () => INITIAL_LIVES }),
+  },
+}).createMachine({
+  id: "player",
+  initial: "alive",
+  context: { lives: INITIAL_LIVES },
+  states: {
+    alive: {
+      on: {
+        HIT: { target: "dead", actions: "loseLife" },
+        COLLECT_LIFE: { actions: "gainLife" },
+        SURRENDER: { target: "gameOver" },
+      },
+    },
+    dead: {
+      on: {
+        RESPAWN: { target: "alive", guard: "hasLives" },
+        GAME_OVER: { target: "gameOver" },
+      },
+    },
+    gameOver: {
+      on: {
+        RESTART: { target: "alive", actions: "resetLives" },
+      },
+    },
+  },
+});
+
+describe("playerMachine transitions", () => {
+  it("starts alive with INITIAL_LIVES", () => {
+    const actor = interpret(testPlayerMachine).start();
+    expect(actor.getSnapshot().matches("alive")).toBe(true);
+    expect(actor.getSnapshot().context.lives).toBe(INITIAL_LIVES);
+  });
+
+  it("HIT transitions to dead and decrements lives", () => {
+    const actor = interpret(testPlayerMachine).start();
+    actor.send({ type: "HIT" });
+    expect(actor.getSnapshot().matches("dead")).toBe(true);
+    expect(actor.getSnapshot().context.lives).toBe(INITIAL_LIVES - 1);
+  });
+
+  it("RESPAWN returns to alive when lives > 0", () => {
+    const actor = interpret(testPlayerMachine).start();
+    actor.send({ type: "HIT" });
+    actor.send({ type: "RESPAWN" });
+    expect(actor.getSnapshot().matches("alive")).toBe(true);
+  });
+
+  it("HIT at 1 life then GAME_OVER transitions to gameOver", () => {
+    const actor = interpret(testPlayerMachine).start();
+    // Burn through lives by hitting then respawning
+    for (let i = 1; i < INITIAL_LIVES; i++) {
+      actor.send({ type: "HIT" });
+      expect(actor.getSnapshot().matches("dead")).toBe(true);
+      actor.send({ type: "RESPAWN" });
+      expect(actor.getSnapshot().matches("alive")).toBe(true);
+    }
+    // Last life
+    actor.send({ type: "HIT" });
+    expect(actor.getSnapshot().matches("dead")).toBe(true);
+    expect(actor.getSnapshot().context.lives).toBe(0);
+    actor.send({ type: "GAME_OVER" });
+    expect(actor.getSnapshot().matches("gameOver")).toBe(true);
+  });
+
+  it("RESTART from gameOver resets lives and returns to alive", () => {
+    const actor = interpret(testPlayerMachine).start();
+    // reach gameOver
+    for (let i = 0; i < INITIAL_LIVES; i++) {
+      actor.send({ type: "HIT" });
+    }
+    actor.send({ type: "GAME_OVER" });
+    expect(actor.getSnapshot().matches("gameOver")).toBe(true);
+
+    actor.send({ type: "RESTART" });
+    expect(actor.getSnapshot().matches("alive")).toBe(true);
+    expect(actor.getSnapshot().context.lives).toBe(INITIAL_LIVES);
+  });
+
+  it("SURRENDER from alive goes directly to gameOver", () => {
+    const actor = interpret(testPlayerMachine).start();
+    actor.send({ type: "SURRENDER" });
+    expect(actor.getSnapshot().matches("gameOver")).toBe(true);
+  });
+
+  it("COLLECT_LIFE increments lives up to 5", () => {
+    const actor = interpret(testPlayerMachine).start();
+    actor.send({ type: "COLLECT_LIFE" });
+    expect(actor.getSnapshot().context.lives).toBe(INITIAL_LIVES + 1);
+  });
+
+  it("COLLECT_LIFE caps at 5", () => {
+    const actor = interpret(testPlayerMachine).start();
+    for (let i = 0; i < 5; i++) {
+      actor.send({ type: "COLLECT_LIFE" });
+    }
+    expect(actor.getSnapshot().context.lives).toBe(5);
+  });
+});
+
+const testGameMachine = setup({
+  types: {
+    context: {} as Record<string, never>,
+    events: {} as
+      | { type: "START" }
+      | { type: "ROUND_OVER" },
+  },
+}).createMachine({
+  id: "game",
+  initial: "lobby",
+  context: {},
+  states: {
+    lobby: {
+      on: {
+        START: { target: "playing" },
+      },
+    },
+    playing: {
+      on: {
+        ROUND_OVER: { target: "lobby" },
+      },
+    },
+  },
+});
+
+describe("gameMachine transitions", () => {
+  it("starts in lobby", () => {
+    const actor = interpret(testGameMachine).start();
+    expect(actor.getSnapshot().matches("lobby")).toBe(true);
+  });
+
+  it("START transitions to playing", () => {
+    const actor = interpret(testGameMachine).start();
+    actor.send({ type: "START" });
+    expect(actor.getSnapshot().matches("playing")).toBe(true);
+  });
+
+  it("ROUND_OVER returns to lobby", () => {
+    const actor = interpret(testGameMachine).start();
+    actor.send({ type: "START" });
+    actor.send({ type: "ROUND_OVER" });
+    expect(actor.getSnapshot().matches("lobby")).toBe(true);
+  });
+});

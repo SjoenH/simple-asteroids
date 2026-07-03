@@ -207,6 +207,27 @@ export class GameServer extends Server {
       return;
     }
 
+    const player = this.players.get(connection.id);
+    if (player) {
+      switch (data.type) {
+        case "playerInput":
+          player.thrust = Boolean(data.thrust);
+          player.brake = Boolean(data.brake);
+          player.rotateLeft = Boolean(data.rotateLeft);
+          player.rotateRight = Boolean(data.rotateRight);
+          player.shoot = Boolean(data.shoot);
+          break;
+        case "surrender":
+          if (player.actor.getSnapshot().matches("alive")) {
+            player.actor.send({ type: "SURRENDER" });
+            this.broadcast(JSON.stringify({ type: "playerKilled", id: connection.id, lives: 0 }));
+            this.checkRoundOver();
+          }
+          break;
+      }
+      return;
+    }
+
     const lobbyPlayer = this.lobbyPlayers.get(connection.id);
     if (lobbyPlayer) {
       switch (data.type) {
@@ -242,26 +263,6 @@ export class GameServer extends Server {
           break;
       }
       return;
-    }
-
-    const player = this.players.get(connection.id);
-    if (!player) return;
-
-    switch (data.type) {
-      case "playerInput":
-        player.thrust = Boolean(data.thrust);
-        player.brake = Boolean(data.brake);
-        player.rotateLeft = Boolean(data.rotateLeft);
-        player.rotateRight = Boolean(data.rotateRight);
-        player.shoot = Boolean(data.shoot);
-        break;
-      case "surrender":
-        if (player.actor.getSnapshot().matches("alive")) {
-          player.actor.send({ type: "SURRENDER" });
-          this.broadcast(JSON.stringify({ type: "playerKilled", id: connection.id, lives: 0 }));
-          this.checkRoundOver();
-        }
-        break;
     }
   }
 
