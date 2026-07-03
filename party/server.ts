@@ -117,6 +117,7 @@ interface PlayerState {
   isNPC: boolean;
   aiRotateDir: number;
   aiSwitchTimer: number;
+  aiThrustTimer: number;
 }
 
 interface AsteroidState {
@@ -179,6 +180,7 @@ export class GameServer extends Server {
       isNPC: false,
       aiRotateDir: 0,
       aiSwitchTimer: 0,
+      aiThrustTimer: 0,
     };
     this.players.set(connection.id, player);
 
@@ -356,6 +358,7 @@ export class GameServer extends Server {
       isNPC: true,
       aiRotateDir: Math.random() < 0.5 ? -1 : 1,
       aiSwitchTimer: 1 + Math.random() * 3,
+      aiThrustTimer: Math.random() * 3,
     };
     this.players.set(id, player);
     this.broadcast(JSON.stringify({ type: "playerJoined", id, name: player.name }));
@@ -369,7 +372,13 @@ export class GameServer extends Server {
       if (!p.actor.getSnapshot().matches("alive")) continue;
 
       if (p.isNPC) {
-        npcAI(p, dt);
+        const nearby: Vec3[] = [];
+        for (const [oid, o] of this.players) {
+          if (oid === id || !o.actor.getSnapshot().matches("alive")) continue;
+          const d = vLen(vSub(p.pos, o.pos));
+          if (d < 150) nearby.push(o.pos);
+        }
+        npcAI(p, dt, nearby, p.pos, p.forward);
       }
 
       if (p.rotateLeft) {

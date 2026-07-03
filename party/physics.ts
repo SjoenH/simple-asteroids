@@ -97,6 +97,7 @@ export function initialTangent(pos: Vec3): Vec3 {
 export interface NpcInput {
   aiRotateDir: number;
   aiSwitchTimer: number;
+  aiThrustTimer: number;
   rotateLeft: boolean;
   rotateRight: boolean;
   thrust: boolean;
@@ -104,16 +105,59 @@ export interface NpcInput {
   shoot: boolean;
 }
 
-export function npcAI(input: NpcInput, dt: number): void {
-  input.aiSwitchTimer -= dt;
-  if (input.aiSwitchTimer <= 0) {
-    const r = Math.random();
-    input.aiRotateDir = r < 0.4 ? -1 : r < 0.7 ? 1 : 0;
-    input.aiSwitchTimer = 1 + Math.random() * 3;
+/**
+ * Boids-inspired separation: compute signed angle to steer away from nearby ships.
+ * Returns angle in radians (positive = steer right, negative = steer left).
+ * Returns 0 if no steering needed.
+ */
+function boidsSteer(pos: Vec3, fwd: Vec3, nearby: Vec3[], sepDistance: number): number {
+  let steer = { x: 0, y: 0, z: 0 };
+  for (const other of nearby) {
+    const away = vSub(pos, other);
+    const t = tangentOf(away, pos);
+    const d = vLen(t);
+    if (d < 0.001 || d > sepDistance) continue;
+    steer = vAdd(steer, vScale(vNorm(t), (sepDistance - d) / sepDistance));
   }
-  input.rotateLeft = input.aiRotateDir === -1;
-  input.rotateRight = input.aiRotateDir === 1;
-  input.thrust = true;
+  if (vLen(steer) < 0.001) return 0;
+  const n = vNorm(pos);
+  const desired = vNorm(steer);
+  const right = vNorm(vCross(fwd, n));
+  const sin = vDot(desired, right);
+  const cos = vDot(desired, fwd);
+  return Math.atan2(sin, cos);
+}
+
+export function npcAI(
+  input: NpcInput,
+  dt: number,
+  nearbyShips: Vec3[],
+  pos: Vec3,
+  fwd: Vec3,
+): void {
+  const steerAngle = boidsSteer(pos, fwd, nearbyShips, 150);
+
+  if (Math.abs(steerAngle) > 0.05) {
+    input.rotateLeft = steerAngle < 0;
+    input.rotateRight = steerAngle > 0;
+    input.aiSwitchTimer = Math.min(input.aiSwitchTimer, 0.3);
+  } else {
+    input.aiSwitchTimer -= dt;
+    if (input.aiSwitchTimer <= 0) {
+      const r = Math.random();
+      input.aiRotateDir = r < 0.3 ? -1 : r < 0.6 ? 1 : 0;
+      input.aiSwitchTimer = 2 + Math.random() * 4;
+    }
+    input.rotateLeft = input.aiRotateDir === -1;
+    input.rotateRight = input.aiRotateDir === 1;
+  }
+
+  input.aiThrustTimer -= dt;
+  if (input.aiThrustTimer <= 0) {
+    input.thrust = Math.random() < 0.7;
+    input.aiThrustTimer = input.thrust ? 1 + Math.random() * 3 : 0.5 + Math.random() * 1.5;
+  }
+
   input.brake = false;
   input.shoot = true;
 }
