@@ -241,7 +241,17 @@ export class GameServer extends Server {
         break;
       case "restart":
         if (player.actor.getSnapshot().matches("gameOver")) {
-          this.respawnPlayer(connection.id, true);
+          let otherAlive = false;
+          for (const [pid, p] of this.players) {
+            if (pid === connection.id || p.isNPC) continue;
+            if (p.actor.getSnapshot().matches("alive")) {
+              otherAlive = true;
+              break;
+            }
+          }
+          if (!otherAlive) {
+            this.respawnPlayer(connection.id, true);
+          }
         }
         break;
     }

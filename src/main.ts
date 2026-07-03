@@ -338,18 +338,64 @@ function showGameOver(): void {
 
   gameOverLayer.addChild(mapGfx);
 
+  gameOverLayer.addChild(createGameOverButton(w));
+  gameOverLayer.visible = true;
+}
+
+let gameOverBtn: Text | null = null;
+
+function createGameOverButton(w: number): Text {
+  const otherAlive = [...players.values()].some(p => !p.isNPC && p.lives > 0);
+  if (otherAlive) {
+    const msg = makeText("Waiting for all players to die...", { fill: 0x888899, fontSize: 16 });
+    msg.anchor.set(0.5);
+    msg.x = w / 2;
+    msg.y = 530;
+    gameOverBtn = null;
+    return msg;
+  }
   const btn = makeText("[ Click to Respawn ]", { fill: 0x44ddff, fontSize: 20 });
   btn.anchor.set(0.5);
   btn.x = w / 2;
-  btn.y = h - 60;
+  btn.y = 520;
   btn.eventMode = "static";
   btn.cursor = "pointer";
   btn.on("pointertap", () => {
     ws.send(JSON.stringify({ type: "restart" }));
   });
-  gameOverLayer.addChild(btn);
+  gameOverBtn = btn;
+  return btn;
+}
 
-  gameOverLayer.visible = true;
+function updateGameOverButton(): void {
+  if (!gameOverLayer.visible) return;
+  const w = app.screen.width;
+  const otherAlive = [...players.values()].some(p => !p.isNPC && p.lives > 0);
+  if (otherAlive) {
+    if (gameOverBtn) {
+      const idx = gameOverLayer.getChildIndex(gameOverBtn);
+      gameOverLayer.removeChild(gameOverBtn);
+      gameOverBtn = null;
+      const msg = makeText("Waiting for all players to die...", { fill: 0x888899, fontSize: 16 });
+      msg.anchor.set(0.5);
+      msg.x = w / 2;
+      msg.y = 530;
+      gameOverLayer.addChildAt(msg, idx);
+    }
+  } else {
+    if (!gameOverBtn) {
+      gameOverBtn = makeText("[ Click to Respawn ]", { fill: 0x44ddff, fontSize: 20 });
+      gameOverBtn.anchor.set(0.5);
+      gameOverBtn.x = w / 2;
+      gameOverBtn.y = 520;
+      gameOverBtn.eventMode = "static";
+      gameOverBtn.cursor = "pointer";
+      gameOverBtn.on("pointertap", () => {
+        ws.send(JSON.stringify({ type: "restart" }));
+      });
+      gameOverLayer.addChild(gameOverBtn);
+    }
+  }
 }
 
 function hideGameOver(): void {
@@ -866,6 +912,7 @@ function handleMessage(e: MessageEvent): void {
         }
       }
       refreshScoreboard();
+      if (gameOverLayer.visible) updateGameOverButton();
       break;
     }
 
