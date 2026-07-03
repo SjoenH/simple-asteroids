@@ -65,6 +65,15 @@ function radToScreen(q: Vec3, p: Vec3, fwd: Vec3): { x: number; y: number } | nu
   return { x: vDot(dir, right) * screenDist, y: -vDot(dir, fwd) * screenDist };
 }
 
+function forwardScreenAngle(pos: Vec3, fwd: Vec3, pp: Vec3, pf: Vec3): number {
+  const n = vNorm(pp);
+  const right = vNorm(vCross(pf, n));
+  const fwdProj = vNorm(tangentOf(fwd, n));
+  const sx = vDot(fwdProj, right);
+  const sy = -vDot(fwdProj, pf);
+  return Math.atan2(sx, sy);
+}
+
 const PEER_COLORS: number[] = [
   0x00ff88, 0xff44ff, 0x44ddff, 0xff8800, 0xaaaaff, 0xff4455,
 ];
@@ -318,12 +327,15 @@ app.ticker.add(() => {
     p.currentPos.x += (p.targetPos.x - p.currentPos.x) * 0.18;
     p.currentPos.y += (p.targetPos.y - p.currentPos.y) * 0.18;
     p.currentPos.z += (p.targetPos.z - p.currentPos.z) * 0.18;
-    const screen = radToScreen(p.currentPos, pp, pf);
-    if (screen) {
-      p.container.x = screen.x;
-      p.container.y = screen.y;
-    }
-    p.container.visible = screen !== null;
+  }
+
+  for (const [id, p] of players) {
+    const s = radToScreen(p.currentPos, pp, pf);
+    if (!s) { p.sprite.visible = false; continue; }
+    p.sprite.visible = true;
+    p.container.x = s.x;
+    p.container.y = s.y;
+    p.sprite.rotation = id === localId ? 0 : forwardScreenAngle(p.currentPos, p.forward, pp, pf);
   }
 
   for (const [id, s] of asteroids) {

@@ -1,35 +1,18 @@
 import { Server, Connection, ConnectionContext } from "partyserver";
 import { setup, assign, interpret, type Actor } from "xstate";
-
-interface Vec3 { x: number; y: number; z: number; }
-
-const RADIUS = 1000;
-const ROTATION_SPEED = 3;
-const PLAYER_ACCEL = 300;
-const FRICTION = 0.015;
-const BRAKE_DECEL = 0.08;
-const MAX_SPEED = 400;
-const BULLET_SPEED = 400;
-const BULLET_LIFE = 2;
-const SHOOT_COOLDOWN = 0.25;
-const ASTEROID_SPEED = 60;
-const ASTEROID_RADII: Record<number, number> = { 1: 40, 2: 26, 3: 14 };
-const PLAYER_RADII: Record<number, number> = { 1: 35, 2: 24, 3: 14 };
-const ASTEROID_SCORES: Record<number, number> = { 1: 20, 2: 50, 3: 100 };
-
-const INITIAL_LIVES = 3;
-const RESPAWN_DELAY = 3;
-const GAME_OVER_RESPAWN_DELAY = 5;
-const POWERUP_SPAWN_INTERVAL = 6;
-const MAX_POWERUPS = 6;
-const POWERUP_LIFETIME = 20;
-const POWERUP_RADIUS = 60;
-const INVISIBILITY_DURATION = 5;
-const MULTI_CANNON_DURATION = 8;
-const MULTI_CANNON_SPREAD = 0.12;
-
-type PowerUpType = 'extraLife' | 'invisibility' | 'multiCannon';
-const POWERUP_TYPES: PowerUpType[] = ['extraLife', 'invisibility', 'multiCannon'];
+import {
+  Vec3, ROTATION_SPEED, PLAYER_ACCEL, FRICTION, BRAKE_DECEL,
+  MAX_SPEED, BULLET_SPEED, BULLET_LIFE, SHOOT_COOLDOWN,
+  ASTEROID_SPEED, ASTEROID_RADII, PLAYER_RADII, ASTEROID_SCORES,
+  INITIAL_LIVES, RESPAWN_DELAY, GAME_OVER_RESPAWN_DELAY,
+  POWERUP_SPAWN_INTERVAL, MAX_POWERUPS, POWERUP_LIFETIME, POWERUP_RADIUS,
+  PLAYER_KILL_SCORE, INVISIBILITY_DURATION, MULTI_CANNON_DURATION, MULTI_CANNON_SPREAD,
+  NPC_COUNT, NPC_NAMES,
+  type PowerUpType, POWERUP_TYPES,
+  vAdd, vSub, vScale, vLen, vNorm,
+  tangentOf, randomPos, sphereAdvance, rotateForward, initialTangent,
+  npcAI,
+} from "./physics";
 
 // ── XState machines ──
 
@@ -116,62 +99,6 @@ let nextAsteroidId = 1;
 let nextPowerUpId = 1;
 let nextBulletId = 1;
 
-function vAdd(a: Vec3, b: Vec3): Vec3 {
-  return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
-}
-function vSub(a: Vec3, b: Vec3): Vec3 {
-  return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
-}
-function vScale(v: Vec3, s: number): Vec3 {
-  return { x: v.x * s, y: v.y * s, z: v.z * s };
-}
-function vDot(a: Vec3, b: Vec3): number {
-  return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-function vCross(a: Vec3, b: Vec3): Vec3 {
-  return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x };
-}
-function vLen(v: Vec3): number {
-  return Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-}
-function vNorm(v: Vec3): Vec3 {
-  const l = vLen(v);
-  return l === 0 ? { x: 0, y: 0, z: 1 } : vScale(v, 1 / l);
-}
-
-function tangentOf(v: Vec3, n: Vec3): Vec3 {
-  const u = vNorm(n);
-  return vSub(v, vScale(u, vDot(v, u)));
-}
-
-function randomPos(): Vec3 {
-  const theta = Math.random() * Math.PI * 2;
-  const phi = Math.acos(2 * Math.random() - 1);
-  return {
-    x: RADIUS * Math.sin(phi) * Math.cos(theta),
-    y: RADIUS * Math.sin(phi) * Math.sin(theta),
-    z: RADIUS * Math.cos(phi),
-  };
-}
-
-function sphereAdvance(pos: Vec3, vel: Vec3, dt: number): { pos: Vec3; vel: Vec3 } {
-  const newPos = vScale(vNorm(vAdd(pos, vScale(vel, dt))), RADIUS);
-  const newVel = tangentOf(vel, newPos);
-  return { pos: newPos, vel: newVel };
-}
-
-function rotateForward(fwd: Vec3, pos: Vec3, angle: number): Vec3 {
-  const n = vNorm(pos);
-  const right = vNorm(vCross(fwd, n));
-  return vNorm(vAdd(vScale(fwd, Math.cos(angle)), vScale(right, Math.sin(angle))));
-}
-
-function initialTangent(pos: Vec3): Vec3 {
-  const n = vNorm(pos);
-  const t = tangentOf({ x: 0, y: 0, z: 1 }, n);
-  return vLen(t) > 0.001 ? vNorm(t) : vNorm(tangentOf({ x: 1, y: 0, z: 0 }, n));
-}
-
 interface PlayerState {
   name: string;
   pos: Vec3;
@@ -187,6 +114,9 @@ interface PlayerState {
   shootCooldown: number;
   invisibilityTimer: number;
   multiCannonTimer: number;
+  isNPC: boolean;
+  aiRotateDir: number;
+  aiSwitchTimer: number;
 }
 
 interface AsteroidState {
@@ -223,6 +153,9 @@ export class GameServer extends Server {
 
   async onStart(): Promise<void> {
     this.spawnAsteroids(6);
+    for (let i = 0; i < NPC_COUNT; i++) {
+      this.spawnNPC(i);
+    }
     this.tickInterval = setInterval(() => this.tick(), 1000 / 30);
   }
 
@@ -243,6 +176,9 @@ export class GameServer extends Server {
       shootCooldown: 0,
       invisibilityTimer: 0,
       multiCannonTimer: 0,
+      isNPC: false,
+      aiRotateDir: 0,
+      aiSwitchTimer: 0,
     };
     this.players.set(connection.id, player);
 
@@ -255,6 +191,15 @@ export class GameServer extends Server {
         type: "powerUpSpawned", id: pid,
         x: pu.pos.x, y: pu.pos.y, z: pu.pos.z,
         puType: pu.type,
+      }));
+    }
+
+    for (const [pid, p] of this.players) {
+      if (pid === connection.id) continue;
+      connection.send(JSON.stringify({
+        type: "playerJoined",
+        id: pid,
+        name: p.name,
       }));
     }
 
@@ -370,6 +315,11 @@ export class GameServer extends Server {
     }
     player.invisibilityTimer = 0;
     player.multiCannonTimer = 0;
+    player.shootCooldown = player.isNPC ? Math.random() * SHOOT_COOLDOWN : 0;
+    if (player.isNPC) {
+      player.aiRotateDir = Math.random() < 0.5 ? -1 : 1;
+      player.aiSwitchTimer = 1 + Math.random() * 3;
+    }
     this.broadcast(
       JSON.stringify({
         type: "playerRespawned",
@@ -385,12 +335,42 @@ export class GameServer extends Server {
     );
   }
 
+  private spawnNPC(index: number): void {
+    const pos = randomPos();
+    const id = `npc_${index}`;
+    const player: PlayerState = {
+      name: NPC_NAMES[index] ?? `Bot ${index}`,
+      pos,
+      vel: { x: 0, y: 0, z: 0 },
+      forward: initialTangent(pos),
+      score: 0,
+      actor: interpret(playerMachine).start(),
+      thrust: false,
+      brake: false,
+      rotateLeft: false,
+      rotateRight: false,
+      shoot: false,
+      shootCooldown: Math.random() * SHOOT_COOLDOWN,
+      invisibilityTimer: 0,
+      multiCannonTimer: 0,
+      isNPC: true,
+      aiRotateDir: Math.random() < 0.5 ? -1 : 1,
+      aiSwitchTimer: 1 + Math.random() * 3,
+    };
+    this.players.set(id, player);
+    this.broadcast(JSON.stringify({ type: "playerJoined", id, name: player.name }));
+  }
+
   private tick(): void {
     const dt = 1 / 30;
 
     // ── Player movement ──
     for (const [id, p] of this.players) {
       if (!p.actor.getSnapshot().matches("alive")) continue;
+
+      if (p.isNPC) {
+        npcAI(p, dt);
+      }
 
       if (p.rotateLeft) {
         p.forward = rotateForward(p.forward, p.pos, -ROTATION_SPEED * dt);
@@ -518,6 +498,37 @@ export class GameServer extends Server {
           const list = hitAsteroids.get(aid) ?? [];
           list.push(b.ownerId);
           hitAsteroids.set(aid, list);
+          break;
+        }
+      }
+    }
+
+    // ── Bullet-player collisions ──
+    for (const [bid, b] of this.bullets) {
+      if (deadBullets.includes(bid)) continue;
+      if (b.life <= 0) continue;
+
+      for (const [pid, p] of this.players) {
+        if (!p.actor.getSnapshot().matches("alive")) continue;
+        if (b.ownerId === pid) continue;
+        const d = vLen(vSub(b.pos, p.pos));
+        if (d < 15) {
+          deadBullets.push(bid);
+          p.actor.send({ type: "HIT" });
+          const livesLeft = p.actor.getSnapshot().context.lives;
+          this.broadcast(JSON.stringify({ type: "playerKilled", id: pid, lives: livesLeft }));
+          if (p.actor.getSnapshot().matches("gameOver")) {
+            setTimeout(() => this.respawnPlayer(pid, true), GAME_OVER_RESPAWN_DELAY * 1000);
+          } else {
+            setTimeout(() => this.respawnPlayer(pid, false), RESPAWN_DELAY * 1000);
+          }
+          const shooter = this.players.get(b.ownerId);
+          if (shooter) {
+            shooter.score += PLAYER_KILL_SCORE;
+            this.broadcast(
+              JSON.stringify({ type: "scoreUpdated", id: b.ownerId, score: shooter.score }),
+            );
+          }
           break;
         }
       }
