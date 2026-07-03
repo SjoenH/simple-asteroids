@@ -287,7 +287,10 @@ app.ticker.add(() => {
 
   connection
     .invoke('PlayerInput', thrust, rotateLeft, rotateRight, shoot)
-    .catch(() => { /* server may not implement this endpoint yet */ });
+    .catch((err: unknown) => {
+      // Server may not implement PlayerInput yet; suppress to avoid noise.
+      if (import.meta.env.DEV) console.debug('PlayerInput not handled:', err);
+    });
 });
 
 // ── SignalR connection ────────────────────────────────────────────────────────
