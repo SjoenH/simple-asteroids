@@ -13,10 +13,10 @@ AKIA[0-9A-Z]{16}
 xox[baprs]-[0-9A-Za-z-]{24,}
 SFMY[0-9A-Za-z-]{36,}
 key-[0-9A-Za-z]{32,}
-api[_-]?key['\"]?\s*[:=]\s*['\"][A-Za-z0-9_\-]{16,}
-password['\"]?\s*[:=]\s*['\"][^'\"]{4,}
-secret['\"]?\s*[:=]\s*['\"][^'\"]{8,}
-token['\"]?\s*[:=]\s*['\"][A-Za-z0-9_\-\.]{8,}
+api[_-]?key['\"]?[[:space:]]*[:=][[:space:]]*['\"][A-Za-z0-9_\-]{16,}
+password['\"]?[[:space:]]*[:=][[:space:]]*['\"][^'\"]{4,}
+secret['\"]?[[:space:]]*[:=][[:space:]]*['\"][^'\"]{8,}
+token['\"]?[[:space:]]*[:=][[:space:]]*['\"][A-Za-z0-9_\-\.]{8,}
 "
 
 # Join patterns with |
@@ -34,9 +34,9 @@ fi
 # Check staged content for secret patterns
 matches=$(echo "$files" | xargs -I{} sh -c 'git show ":{}"' 2>/dev/null \
   | grep -inE "$PATTERN" \
-  | grep -v "^[0-9]*:\s*\*" \
-  | grep -v "^[0-9]*:\s*//" \
-  | grep -v "^[0-9]*:\s*#" \
+  | grep -v "^[0-9]*:[[:space:]]*\*" \
+  | grep -v "^[0-9]*:[[:space:]]*//" \
+  | grep -v "^[0-9]*:[[:space:]]*#" \
   || true)
 
 if [ -n "$matches" ]; then
