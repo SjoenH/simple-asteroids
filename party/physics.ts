@@ -148,11 +148,11 @@ export function npcAI(
     input.rotateLeft = steerAngle < 0;
     input.rotateRight = steerAngle > 0;
   } else {
-    input.aiSwitchTimer -= dt;
+      input.aiSwitchTimer -= dt;
     if (input.aiSwitchTimer <= 0) {
       const r = Math.random();
-      input.aiRotateDir = r < 0.3 ? -1 : r < 0.6 ? 1 : 0;
-      input.aiSwitchTimer = 2 + Math.random() * 4;
+      input.aiRotateDir = r < 0.1 ? -1 : r < 0.2 ? 1 : 0;
+      input.aiSwitchTimer = 3 + Math.random() * 5;
     }
     input.rotateLeft = input.aiRotateDir === -1;
     input.rotateRight = input.aiRotateDir === 1;
@@ -165,5 +165,10 @@ export function npcAI(
   }
 
   input.brake = false;
-  input.shoot = true;
+
+  if (input.rotateLeft || input.rotateRight) {
+    input.shoot = Math.random() < 0.25;
+  } else {
+    input.shoot = true;
+  }
 }

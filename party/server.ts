@@ -500,9 +500,10 @@ export class GameServer extends Server {
 
     // ── Bullets ──
     for (const [id, b] of this.bullets) {
+      const speed = vLen(b.vel);
       const moved = sphereAdvance(b.pos, b.vel, dt);
       b.pos = moved.pos;
-      b.vel = vScale(vNorm(moved.vel), BULLET_SPEED);
+      b.vel = vScale(vNorm(moved.vel), speed);
       b.life -= dt;
 
       this.broadcast(
@@ -640,7 +641,7 @@ export class GameServer extends Server {
           const bid = `bul_${nextBulletId++}`;
           this.bullets.set(bid, {
             pos: { ...p.pos },
-            vel: vScale(dir, BULLET_SPEED),
+            vel: vAdd(vScale(dir, BULLET_SPEED), p.vel),
             ownerId: id,
             life: BULLET_LIFE,
           });

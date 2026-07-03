@@ -44,20 +44,20 @@ describe("npcAI", () => {
     const n = makeNpc();
     n.aiSwitchTimer = 0.01;
     const rand = vi.spyOn(Math, "random");
-    rand.mockReturnValue(0.2);
+    rand.mockReturnValue(0.05);
     npcAI(n, 0.02, [], ZERO, UP);
     expect(n.aiRotateDir).toBe(-1);
     expect(n.rotateLeft).toBe(true);
     expect(n.rotateRight).toBe(false);
-    expect(n.aiSwitchTimer).toBeGreaterThan(1);
+    expect(n.aiSwitchTimer).toBeGreaterThan(2);
     rand.mockRestore();
   });
 
-  it("sets rotateRight when wander random >= 0.3 and < 0.6", () => {
+  it("sets rotateRight when wander random < 0.2", () => {
     const n = makeNpc();
     n.aiSwitchTimer = 0.01;
     const rand = vi.spyOn(Math, "random");
-    rand.mockReturnValue(0.5);
+    rand.mockReturnValue(0.15);
     npcAI(n, 0.02, [], ZERO, UP);
     expect(n.aiRotateDir).toBe(1);
     expect(n.rotateRight).toBe(true);
