@@ -365,26 +365,64 @@ app.ticker.add(() => {
   gameLayer.y = app.screen.height / 2;
   gameLayer.scale.set(zoom);
 
-  updateDebugViews();
+  updateDebugViews(pp, pf);
 });
 
-function updateDebugViews(): void {
+function updateDebugViews(camPP: Vec3, camPF: Vec3): void {
   debugContainer.removeChildren();
 
   if (players.size === 0) return;
 
   const viewSize = 100;
-  const gap = 4;
-  const count = players.size;
-  const totalWidth = count * (viewSize + gap);
-  const startX = app.screen.width - totalWidth - 10;
-  const startY = 10;
+  const screenW = app.screen.width;
+  const screenH = app.screen.height;
+  const hw = screenW / 2;
+  const hh = screenH / 2;
+  const zm = getZoom();
 
-  let i = 0;
   for (const [id, p] of players) {
+    if (id === localId) continue;
+
+    const s = radToScreen(p.currentPos, camPP, camPF);
+    let visible = false;
+    if (s) {
+      const sx = s.x * zm + hw;
+      const sy = s.y * zm + hh;
+      if (sx >= -10 && sx < screenW + 10 && sy >= -10 && sy < screenH + 10) {
+        visible = true;
+      }
+    }
+    if (visible) continue;
+
+    let angle: number;
+    if (s) {
+      angle = Math.atan2(s.y, s.x);
+    } else {
+      const dir = vNorm(vSub(p.currentPos, camPP));
+      const n = vNorm(camPP);
+      const right = vNorm(vCross(camPF, n));
+      const dx = vDot(dir, right);
+      const dy = -vDot(dir, camPF);
+      angle = Math.atan2(dy, dx);
+    }
+
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    let t: number;
+    if (Math.abs(cos) * hh > Math.abs(sin) * hw) {
+      t = hw / Math.abs(cos);
+    } else {
+      t = hh / Math.abs(sin);
+    }
+
+    let ex = hw + cos * t - viewSize / 2;
+    let ey = hh + sin * t - viewSize / 2;
+    ex = Math.max(2, Math.min(ex, screenW - viewSize - 2));
+    ey = Math.max(2, Math.min(ey, screenH - viewSize - 2));
+
     const c = new Container();
-    c.x = startX + i * (viewSize + gap);
-    c.y = startY;
+    c.x = ex;
+    c.y = ey;
 
     const bg = new Graphics();
     bg.setFillStyle({ color: 0x000022, alpha: 0.85 });
@@ -403,59 +441,58 @@ function updateDebugViews(): void {
     const gfx = new Graphics();
     c.addChild(gfx);
 
-    const pp = p.currentPos;
-    const pf = { x: 0, y: 0, z: 1 };
+    const dvPP = p.currentPos;
+    const dvPF = { x: 0, y: 0, z: 1 };
     const scale = 0.2;
     const cx = viewSize / 2;
     const cy = viewSize / 2;
 
     for (const [eid, ep] of players) {
-      const s = radToScreen(ep.currentPos, pp, pf);
-      if (!s) continue;
-      const sx = s.x * scale + cx;
-      const sy = s.y * scale + cy;
-      if (sx < -5 || sx > viewSize + 5 || sy < -5 || sy > viewSize + 5) continue;
+      const es = radToScreen(ep.currentPos, dvPP, dvPF);
+      if (!es) continue;
+      const esx = es.x * scale + cx;
+      const esy = es.y * scale + cy;
+      if (esx < -5 || esx > viewSize + 5 || esy < -5 || esy > viewSize + 5) continue;
       const color = eid === id ? 0xffff00 : eid === localId ? 0x44ddff : 0x88ff88;
       gfx.setFillStyle({ color, alpha: 0.9 });
-      gfx.circle(sx, sy, 3);
+      gfx.circle(esx, esy, 3);
       gfx.fill();
     }
 
     for (const apos of asteroidPos.values()) {
-      const s = radToScreen(apos, pp, pf);
-      if (!s) continue;
-      const sx = s.x * scale + cx;
-      const sy = s.y * scale + cy;
-      if (sx < -5 || sx > viewSize + 5 || sy < -5 || sy > viewSize + 5) continue;
+      const es = radToScreen(apos, dvPP, dvPF);
+      if (!es) continue;
+      const esx = es.x * scale + cx;
+      const esy = es.y * scale + cy;
+      if (esx < -5 || esx > viewSize + 5 || esy < -5 || esy > viewSize + 5) continue;
       gfx.setFillStyle({ color: 0xff6644, alpha: 0.7 });
-      gfx.circle(sx, sy, 2);
+      gfx.circle(esx, esy, 2);
       gfx.fill();
     }
 
     for (const bpos of bulletPos.values()) {
-      const s = radToScreen(bpos, pp, pf);
-      if (!s) continue;
-      const sx = s.x * scale + cx;
-      const sy = s.y * scale + cy;
-      if (sx < -5 || sx > viewSize + 5 || sy < -5 || sy > viewSize + 5) continue;
+      const es = radToScreen(bpos, dvPP, dvPF);
+      if (!es) continue;
+      const esx = es.x * scale + cx;
+      const esy = es.y * scale + cy;
+      if (esx < -5 || esx > viewSize + 5 || esy < -5 || esy > viewSize + 5) continue;
       gfx.setFillStyle({ color: 0xffffff, alpha: 0.8 });
-      gfx.circle(sx, sy, 1);
+      gfx.circle(esx, esy, 1);
       gfx.fill();
     }
 
     for (const [, pu] of powerUps) {
-      const s = radToScreen(pu.pos, pp, pf);
-      if (!s) continue;
-      const sx = s.x * scale + cx;
-      const sy = s.y * scale + cy;
-      if (sx < -5 || sx > viewSize + 5 || sy < -5 || sy > viewSize + 5) continue;
+      const es = radToScreen(pu.pos, dvPP, dvPF);
+      if (!es) continue;
+      const esx = es.x * scale + cx;
+      const esy = es.y * scale + cy;
+      if (esx < -5 || esx > viewSize + 5 || esy < -5 || esy > viewSize + 5) continue;
       gfx.setFillStyle({ color: 0x44ff44, alpha: 0.7 });
-      gfx.circle(sx, sy, 2);
+      gfx.circle(esx, esy, 2);
       gfx.fill();
     }
 
     debugContainer.addChild(c);
-    i++;
   }
 }
 
