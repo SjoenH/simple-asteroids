@@ -24,7 +24,8 @@ const playerMachine = setup({
       | { type: "COLLECT_LIFE" }
       | { type: "RESPAWN" }
       | { type: "GAME_OVER" }
-      | { type: "RESTART" },
+      | { type: "RESTART" }
+      | { type: "SURRENDER" },
   },
   guards: {
     hasLives: ({ context }) => context.lives > 0,
@@ -43,6 +44,7 @@ const playerMachine = setup({
       on: {
         HIT: { target: "dead", actions: "loseLife" },
         COLLECT_LIFE: { actions: "gainLife" },
+        SURRENDER: { target: "gameOver" },
       },
     },
     dead: {
@@ -61,33 +63,24 @@ const playerMachine = setup({
 
 const gameMachine = setup({
   types: {
-    context: {} as { playerCount: number },
+    context: {} as Record<string, never>,
     events: {} as
-      | { type: "PLAYER_JOINED" }
-      | { type: "PLAYER_LEFT" },
-  },
-  actions: {
-    inc: assign({ playerCount: ({ context }) => context.playerCount + 1 }),
-    dec: assign({ playerCount: ({ context }) => context.playerCount - 1 }),
-    reset: assign({ playerCount: () => 0 }),
+      | { type: "START" }
+      | { type: "ROUND_OVER" },
   },
 }).createMachine({
   id: "game",
-  initial: "idle",
-  context: { playerCount: 0 },
+  initial: "lobby",
+  context: {},
   states: {
-    idle: {
+    lobby: {
       on: {
-        PLAYER_JOINED: { target: "playing", actions: "inc" },
+        START: { target: "playing" },
       },
     },
     playing: {
       on: {
-        PLAYER_JOINED: { actions: "inc" },
-        PLAYER_LEFT: [
-          { guard: ({ context }) => context.playerCount <= 1, target: "idle", actions: "reset" },
-          { actions: "dec" },
-        ],
+        ROUND_OVER: { target: "lobby" },
       },
     },
   },
@@ -101,6 +94,7 @@ let nextBulletId = 1;
 
 interface PlayerState {
   name: string;
+  color: number;
   pos: Vec3;
   vel: Vec3;
   forward: Vec3;
@@ -116,6 +110,14 @@ interface PlayerState {
   multiCannonTimer: number;
   isNPC: boolean;
   aiThrustTimer: number;
+}
+
+interface LobbyPlayer {
+  id: string;
+  name: string;
+  color: number;
+  ready: boolean;
+  connection: Connection;
 }
 
 interface AsteroidState {
@@ -139,6 +141,8 @@ interface PowerUpState {
 
 export class GameServer extends Server {
   private players = new Map<string, PlayerState>();
+  private lobbyPlayers = new Map<string, LobbyPlayer>();
+  private hostId: string | null = null;
   private asteroids = new Map<string, AsteroidState>();
   private bullets = new Map<string, BulletState>();
   private powerUps = new Map<string, PowerUpState>();
@@ -151,63 +155,48 @@ export class GameServer extends Server {
   }
 
   async onStart(): Promise<void> {
-    this.spawnAsteroids(6);
-    for (let i = 0; i < NPC_COUNT; i++) {
-      this.spawnNPC(i);
-    }
     this.tickInterval = setInterval(() => this.tick(), 1000 / 30);
   }
 
   async onConnect(connection: Connection, ctx: ConnectionContext): Promise<void> {
-    const pos = randomPos();
-    const player: PlayerState = {
+    const lobbyPlayer: LobbyPlayer = {
+      id: connection.id,
       name: "Unknown",
-      pos,
-      vel: { x: 0, y: 0, z: 0 },
-      forward: initialTangent(pos),
-      score: 0,
-      actor: interpret(playerMachine).start(),
-      thrust: false,
-      brake: false,
-      rotateLeft: false,
-      rotateRight: false,
-      shoot: false,
-      shootCooldown: 0,
-      invisibilityTimer: 0,
-      multiCannonTimer: 0,
-      isNPC: false,
-      aiThrustTimer: 0,
+      color: 0xffff00,
+      ready: false,
+      connection,
     };
-    this.players.set(connection.id, player);
+    this.lobbyPlayers.set(connection.id, lobbyPlayer);
 
-    this.gameActor.send({ type: "PLAYER_JOINED" });
-
-    connection.send(JSON.stringify({ type: "connected", id: connection.id, lives: player.actor.getSnapshot().context.lives }));
-
-    for (const [pid, pu] of this.powerUps) {
-      connection.send(JSON.stringify({
-        type: "powerUpSpawned", id: pid,
-        x: pu.pos.x, y: pu.pos.y, z: pu.pos.z,
-        puType: pu.type,
-      }));
+    if (!this.hostId) {
+      this.hostId = connection.id;
+      connection.send(JSON.stringify({ type: "hostChanged", hostId: connection.id }));
     }
 
-    for (const [pid, p] of this.players) {
-      if (pid === connection.id) continue;
-      connection.send(JSON.stringify({
-        type: "playerJoined",
-        id: pid,
-        name: p.name,
-      }));
+    const inGame = this.gameActor.getSnapshot().matches("playing");
+
+    connection.send(JSON.stringify({ type: "connected", id: connection.id, inGame, hostId: this.hostId }));
+
+    // Send lobby state
+    connection.send(JSON.stringify({
+      type: "lobbyState",
+      hostId: this.hostId,
+      players: [...this.lobbyPlayers.values()].map(p => ({
+        id: p.id, name: p.name, color: p.color, ready: p.ready,
+      })),
+    }));
+
+    // If a round is in progress, send game state to new joiner (they watch / play next round)
+    if (inGame) {
+      for (const [pid, p] of this.players) {
+        connection.send(JSON.stringify({
+          type: "playerJoined",
+          id: pid, name: p.name, isNPC: p.isNPC, color: p.color,
+        }));
+      }
     }
 
-    this.broadcast(
-      JSON.stringify({
-        type: "playerJoined",
-        id: connection.id,
-        name: player.name,
-      }),
-    );
+    this.broadcastLobbyUpdate();
   }
 
   async onMessage(connection: Connection, message: string): Promise<void> {
@@ -218,20 +207,47 @@ export class GameServer extends Server {
       return;
     }
 
+    const lobbyPlayer = this.lobbyPlayers.get(connection.id);
+    if (lobbyPlayer) {
+      switch (data.type) {
+        case "setName":
+          lobbyPlayer.name = String(data.name ?? "Unknown");
+          this.broadcastLobbyUpdate();
+          break;
+        case "setColor":
+          lobbyPlayer.color = Number(data.color);
+          this.broadcastLobbyUpdate();
+          break;
+        case "ready":
+          lobbyPlayer.ready = Boolean(data.ready);
+          this.broadcastLobbyUpdate();
+          this.checkAllReady();
+          break;
+        case "startGame":
+          if (this.gameActor.getSnapshot().matches("playing")) break;
+          if ([...this.lobbyPlayers.values()].every(p => p.ready)) {
+            this.startRound();
+          }
+          break;
+        case "kick":
+          if (connection.id !== this.hostId) break;
+          const targetId = String(data.targetId);
+          if (targetId === connection.id) break;
+          const target = this.lobbyPlayers.get(targetId);
+          if (target) {
+            target.connection.close(1008, "Kicked by host");
+            this.lobbyPlayers.delete(targetId);
+            this.broadcastLobbyUpdate();
+          }
+          break;
+      }
+      return;
+    }
+
     const player = this.players.get(connection.id);
     if (!player) return;
 
     switch (data.type) {
-      case "setName":
-        player.name = String(data.name ?? "Unknown");
-        this.broadcast(
-          JSON.stringify({
-            type: "playerRenamed",
-            id: connection.id,
-            name: player.name,
-          }),
-        );
-        break;
       case "playerInput":
         player.thrust = Boolean(data.thrust);
         player.brake = Boolean(data.brake);
@@ -239,28 +255,36 @@ export class GameServer extends Server {
         player.rotateRight = Boolean(data.rotateRight);
         player.shoot = Boolean(data.shoot);
         break;
-      case "restart":
-        if (player.actor.getSnapshot().matches("gameOver")) {
-          let otherAlive = false;
-          for (const [pid, p] of this.players) {
-            if (pid === connection.id || p.isNPC) continue;
-            if (p.actor.getSnapshot().matches("alive")) {
-              otherAlive = true;
-              break;
-            }
-          }
-          if (!otherAlive) {
-            this.respawnPlayer(connection.id, true);
-          }
+      case "surrender":
+        if (player.actor.getSnapshot().matches("alive")) {
+          player.actor.send({ type: "SURRENDER" });
+          this.broadcast(JSON.stringify({ type: "playerKilled", id: connection.id, lives: 0 }));
+          this.checkRoundOver();
         }
         break;
     }
   }
 
   async onClose(connection: Connection): Promise<void> {
+    this.lobbyPlayers.delete(connection.id);
     this.players.delete(connection.id);
-    this.gameActor.send({ type: "PLAYER_LEFT" });
     this.broadcast(JSON.stringify({ type: "playerLeft", id: connection.id }));
+
+    // Reassign host if the host left
+    if (connection.id === this.hostId) {
+      const nextHost = this.lobbyPlayers.values().next().value as LobbyPlayer | undefined;
+      this.hostId = nextHost?.id ?? null;
+      if (this.hostId) {
+        const msg = JSON.stringify({ type: "hostChanged", hostId: this.hostId });
+        for (const [, lp] of this.lobbyPlayers) {
+          lp.connection.send(msg);
+        }
+      }
+    }
+
+    if (this.gameActor.getSnapshot().matches("playing")) {
+      this.checkRoundOver();
+    }
   }
 
   private spawnAsteroids(count: number, size = 1): void {
@@ -349,6 +373,7 @@ export class GameServer extends Server {
     const id = `npc_${index}`;
     const player: PlayerState = {
       name: NPC_NAMES[index] ?? `Bot ${index}`,
+      color: 0x888888,
       pos,
       vel: { x: 0, y: 0, z: 0 },
       forward: initialTangent(pos),
@@ -366,11 +391,111 @@ export class GameServer extends Server {
       aiThrustTimer: Math.random() * 3,
     };
     this.players.set(id, player);
-    this.broadcast(JSON.stringify({ type: "playerJoined", id, name: player.name }));
+    this.broadcast(JSON.stringify({ type: "playerJoined", id, name: player.name, isNPC: true, color: player.color }));
+  }
+
+  private broadcastLobbyUpdate(): void {
+    const msg = JSON.stringify({
+      type: "lobbyUpdate",
+      hostId: this.hostId,
+      players: [...this.lobbyPlayers.values()].map(p => ({
+        id: p.id, name: p.name, color: p.color, ready: p.ready,
+      })),
+    });
+    for (const [, lp] of this.lobbyPlayers) {
+      lp.connection.send(msg);
+    }
+  }
+
+  private checkAllReady(): void {
+    // No-op — round starts via explicit startGame message
+  }
+
+  private startRound(): void {
+    for (const [, lp] of this.lobbyPlayers) {
+      const pos = randomPos();
+      const p: PlayerState = {
+        name: lp.name,
+        color: lp.color,
+        pos,
+        vel: { x: 0, y: 0, z: 0 },
+        forward: initialTangent(pos),
+        score: 0,
+        actor: interpret(playerMachine).start(),
+        thrust: false,
+        brake: false,
+        rotateLeft: false,
+        rotateRight: false,
+        shoot: false,
+        shootCooldown: 0,
+        invisibilityTimer: 0,
+        multiCannonTimer: 0,
+        isNPC: false,
+        aiThrustTimer: 0,
+      };
+      this.players.set(lp.id, p);
+    }
+
+    // Reset lobby ready states
+    for (const [, lp] of this.lobbyPlayers) {
+      lp.ready = false;
+    }
+
+    this.spawnAsteroids(6);
+    for (let i = 0; i < NPC_COUNT; i++) {
+      this.spawnNPC(i);
+    }
+
+    this.gameActor.send({ type: "START" });
+
+    this.broadcastLobbyUpdate();
+
+    this.broadcast(JSON.stringify({
+      type: "gameStarted",
+      players: [...this.players.entries()].map(([id, p]) => ({
+        id, name: p.name, color: p.color,
+        x: p.pos.x, y: p.pos.y, z: p.pos.z,
+        fx: p.forward.x, fy: p.forward.y, fz: p.forward.z,
+        score: p.score,
+        isNPC: p.isNPC,
+        lives: p.actor.getSnapshot().context.lives,
+      })),
+    }));
+  }
+
+  private checkRoundOver(): void {
+    if (!this.gameActor.getSnapshot().matches("playing")) return;
+    let humansAlive = false;
+    for (const [, p] of this.players) {
+      if (p.isNPC) continue;
+      if (p.actor.getSnapshot().matches("alive")) {
+        humansAlive = true;
+        break;
+      }
+    }
+    if (!humansAlive) {
+      this.endRound();
+    }
+  }
+
+  private endRound(): void {
+    this.players.clear();
+    this.asteroids.clear();
+    this.bullets.clear();
+    this.powerUps.clear();
+    nextAsteroidId = 1;
+    nextBulletId = 1;
+    nextPowerUpId = 1;
+
+    this.gameActor.send({ type: "ROUND_OVER" });
+
+    this.broadcast(JSON.stringify({ type: "roundOver" }));
   }
 
   private tick(): void {
     const dt = 1 / 30;
+
+    if (!this.gameActor.getSnapshot().matches("playing")) return;
 
     // ── Player movement ──
     for (const [id, p] of this.players) {
@@ -664,5 +789,8 @@ export class GameServer extends Server {
     if (this.asteroids.size === 0) {
       this.spawnAsteroids(6);
     }
+
+    // ── Check round over ──
+    this.checkRoundOver();
   }
 }

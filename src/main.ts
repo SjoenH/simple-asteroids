@@ -20,6 +20,31 @@ const ASSET_PATHS = {
   bullet: '/assets/Bullet.png',
 } as const;
 
+const ROOM_ANIMALS = ['penguin', 'otter', 'monkey', 'zebra', 'llama', 'platypus', 'capybara', 'narwhal', 'axolotl', 'quokka', 'wombat', 'lemur', 'toucan', 'pangolin', 'okapi'];
+const ROOM_VERBS = ['bounces', 'splashes', 'spins', 'dashes', 'zooms', 'wobbles', 'flips', 'twirls', 'sprints', 'glides', 'hops', 'cartwheels', 'backflips', 'somersaults'];
+const ROOM_ACTIONS = ['wildly', 'happily', 'furiously', 'joyfully', 'chaotically', 'bravely', 'sleepily', 'magnificently', 'awkwardly', 'triumphantly'];
+
+function generateRoomKey(): string {
+  const animal = ROOM_ANIMALS[Math.floor(Math.random() * ROOM_ANIMALS.length)];
+  const verb = ROOM_VERBS[Math.floor(Math.random() * ROOM_VERBS.length)];
+  const action = ROOM_ACTIONS[Math.floor(Math.random() * ROOM_ACTIONS.length)];
+  return `${animal}-${verb}-${action}`;
+}
+
+function getRoomFromURL(): string {
+  const params = new URLSearchParams(window.location.search);
+  const room = params.get('room');
+  return room && /^[a-z0-9-]+$/.test(room) ? room : 'game';
+}
+
+function setRoomInURL(room: string): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set('room', room);
+  window.history.replaceState({}, '', url.toString());
+}
+
+let currentRoom = getRoomFromURL();
+
 interface Vec3 { x: number; y: number; z: number; }
 
 function vAdd(a: Vec3, b: Vec3): Vec3 {
@@ -87,6 +112,7 @@ interface PlayerEntry {
   score: number;
   lives: number;
   name: string;
+  color: number;
   isNPC: boolean;
 }
 
@@ -108,6 +134,7 @@ const powerUps = new Map<string, PowerUpEntry>();
 let localId: string | null = null;
 let playerName = '';
 let connected = false;
+let hostId: string | null = null;
 
 const app = new Application();
 await app.init({
@@ -284,122 +311,259 @@ function showGameOver(): void {
   scoreText.y = 95;
   gameOverLayer.addChild(scoreText);
 
-  const mapSize = Math.min(w, h) * 0.45;
-  const mapX = w / 2;
-  const mapY = h / 2 + 5;
-  const mapR = mapSize / 2;
-
   const mapBg = new Graphics();
   mapBg.setStrokeStyle({ color: 0x334466, width: 1 });
-  mapBg.circle(mapX, mapY, mapR);
+  mapBg.circle(w / 2, h / 2 + 5, Math.min(w, h) * 0.45 / 2);
   mapBg.stroke();
   gameOverLayer.addChild(mapBg);
 
-  const mapGfx = new Graphics();
-
-  for (const [eid, ep] of players) {
-    if (ep.currentPos.z <= 0) continue;
-    const sx = (ep.currentPos.x / RADIUS) * mapR * 0.85;
-    const sy = (ep.currentPos.y / RADIUS) * mapR * 0.85;
-    if (Math.sqrt(sx * sx + sy * sy) > mapR - 4) continue;
-    const color = eid === localId ? 0xffff00 : ep.isNPC ? 0x88ff88 : 0x44ddff;
-    const a = Math.atan2(ep.forward.x, ep.forward.y);
-    const sz = 4;
-    const tipX = mapX + sx + Math.sin(a) * sz;
-    const tipY = mapY + sy - Math.cos(a) * sz;
-    const lx = mapX + sx + Math.sin(a + 2.3) * sz * 0.55;
-    const ly = mapY + sy - Math.cos(a + 2.3) * sz * 0.55;
-    const rx = mapX + sx + Math.sin(a - 2.3) * sz * 0.55;
-    const ry = mapY + sy - Math.cos(a - 2.3) * sz * 0.55;
-    mapGfx.setFillStyle({ color, alpha: 0.9 });
-    mapGfx.poly([tipX, tipY, lx, ly, rx, ry]);
-    mapGfx.fill();
-  }
-
-  for (const apos of asteroidPos.values()) {
-    if (apos.z <= 0) continue;
-    const sx = (apos.x / RADIUS) * mapR * 0.85;
-    const sy = (apos.y / RADIUS) * mapR * 0.85;
-    if (Math.sqrt(sx * sx + sy * sy) > mapR - 4) continue;
-    mapGfx.setFillStyle({ color: 0xff6644, alpha: 0.6 });
-    mapGfx.circle(mapX + sx, mapY + sy, 2);
-    mapGfx.fill();
-  }
-
-  for (const bpos of bulletPos.values()) {
-    if (bpos.z <= 0) continue;
-    const sx = (bpos.x / RADIUS) * mapR * 0.85;
-    const sy = (bpos.y / RADIUS) * mapR * 0.85;
-    if (Math.sqrt(sx * sx + sy * sy) > mapR - 4) continue;
-    mapGfx.setFillStyle({ color: 0xffffff, alpha: 0.5 });
-    mapGfx.circle(mapX + sx, mapY + sy, 1);
-    mapGfx.fill();
-  }
-
-  gameOverLayer.addChild(mapGfx);
+  gameOverLayer.addChild(gameOverMapGfx);
 
   gameOverLayer.addChild(createGameOverButton(w));
   gameOverLayer.visible = true;
 }
 
-let gameOverBtn: Text | null = null;
+function drawGameOverMap(): void {
+  const w = app.screen.width;
+  const h = app.screen.height;
+  const mapSize = Math.min(w, h) * 0.45;
+  const mapX = w / 2;
+  const mapY = h / 2 + 5;
+  const mapR = mapSize / 2;
 
-function createGameOverButton(w: number): Text {
-  const otherAlive = [...players.values()].some(p => !p.isNPC && p.lives > 0);
-  if (otherAlive) {
-    const msg = makeText("Waiting for all players to die...", { fill: 0x888899, fontSize: 16 });
-    msg.anchor.set(0.5);
-    msg.x = w / 2;
-    msg.y = 530;
-    gameOverBtn = null;
-    return msg;
+  // Calculate centroid of alive players for rotation target
+  const alivePositions: Vec3[] = [];
+  for (const [eid, ep] of players) {
+    if (ep.lives > 0) {
+      alivePositions.push(ep.currentPos);
+    }
   }
-  const btn = makeText("[ Click to Respawn ]", { fill: 0x44ddff, fontSize: 20 });
-  btn.anchor.set(0.5);
-  btn.x = w / 2;
-  btn.y = 520;
-  btn.eventMode = "static";
-  btn.cursor = "pointer";
-  btn.on("pointertap", () => {
-    ws.send(JSON.stringify({ type: "restart" }));
-  });
-  gameOverBtn = btn;
-  return btn;
+  let targetAngle = globeAngle;
+  if (alivePositions.length > 0) {
+    const centroid = alivePositions.reduce((a, b) => vAdd(a, b));
+    centroid.x /= alivePositions.length;
+    centroid.y /= alivePositions.length;
+    centroid.z /= alivePositions.length;
+    targetAngle = Math.atan2(centroid.y, centroid.x);
+  }
+
+  // Smoothly interpolate globe angle toward target
+  const diff = targetAngle - globeAngle;
+  globeAngle += diff * 0.05;
+
+  const cosA = Math.cos(globeAngle);
+  const sinA = Math.sin(globeAngle);
+
+  function rotX(x: number, y: number): number { return x * cosA - y * sinA; }
+  function rotY(x: number, y: number): number { return x * sinA + y * cosA; }
+
+  gameOverMapGfx.clear();
+
+  // Players
+  for (const [eid, ep] of players) {
+    const rx = rotX(ep.currentPos.x, ep.currentPos.y);
+    const ry = rotY(ep.currentPos.x, ep.currentPos.y);
+    if (ry <= 0) continue;
+    const sx = (rx / RADIUS) * mapR * 0.85;
+    const sy = (ep.currentPos.z / RADIUS) * mapR * 0.85;
+    if (Math.sqrt(sx * sx + sy * sy) > mapR - 4) continue;
+    const color = eid === localId ? 0xffff00 : ep.isNPC ? 0x88ff88 : 0x44ddff;
+    const fwd = ep.forward;
+    const frx = rotX(fwd.x, fwd.y);
+    const fry = rotY(fwd.x, fwd.y);
+    const a = Math.atan2(frx, fry);
+    const sz = 4;
+    const tipX = mapX + sx + Math.sin(a) * sz;
+    const tipY = mapY + sy - Math.cos(a) * sz;
+    const lx = mapX + sx + Math.sin(a + 2.3) * sz * 0.55;
+    const ly = mapY + sy - Math.cos(a + 2.3) * sz * 0.55;
+    const rx2 = mapX + sx + Math.sin(a - 2.3) * sz * 0.55;
+    const ry2 = mapY + sy - Math.cos(a - 2.3) * sz * 0.55;
+    gameOverMapGfx.setFillStyle({ color, alpha: 0.9 });
+    gameOverMapGfx.poly([tipX, tipY, lx, ly, rx2, ry2]);
+    gameOverMapGfx.fill();
+  }
+
+  // Asteroids
+  for (const apos of asteroidPos.values()) {
+    const rx = rotX(apos.x, apos.y);
+    const ry = rotY(apos.x, apos.y);
+    if (ry <= 0) continue;
+    const sx = (rx / RADIUS) * mapR * 0.85;
+    const sy = (apos.z / RADIUS) * mapR * 0.85;
+    if (Math.sqrt(sx * sx + sy * sy) > mapR - 4) continue;
+    gameOverMapGfx.setFillStyle({ color: 0xff6644, alpha: 0.6 });
+    gameOverMapGfx.circle(mapX + sx, mapY + sy, 2);
+    gameOverMapGfx.fill();
+  }
+
+  // Bullets
+  for (const bpos of bulletPos.values()) {
+    const rx = rotX(bpos.x, bpos.y);
+    const ry = rotY(bpos.x, bpos.y);
+    if (ry <= 0) continue;
+    const sx = (rx / RADIUS) * mapR * 0.85;
+    const sy = (bpos.z / RADIUS) * mapR * 0.85;
+    if (Math.sqrt(sx * sx + sy * sy) > mapR - 4) continue;
+    gameOverMapGfx.setFillStyle({ color: 0xffffff, alpha: 0.5 });
+    gameOverMapGfx.circle(mapX + sx, mapY + sy, 1);
+    gameOverMapGfx.fill();
+  }
 }
+
+let gameOverBtn: Text | null = null;
+let globeAngle = 0;
+const gameOverMapGfx = new Graphics();
 
 function updateGameOverButton(): void {
   if (!gameOverLayer.visible) return;
   const w = app.screen.width;
-  const otherAlive = [...players.values()].some(p => !p.isNPC && p.lives > 0);
-  if (otherAlive) {
-    if (gameOverBtn) {
-      const idx = gameOverLayer.getChildIndex(gameOverBtn);
-      gameOverLayer.removeChild(gameOverBtn);
-      gameOverBtn = null;
-      const msg = makeText("Waiting for all players to die...", { fill: 0x888899, fontSize: 16 });
-      msg.anchor.set(0.5);
-      msg.x = w / 2;
-      msg.y = 530;
-      gameOverLayer.addChildAt(msg, idx);
-    }
-  } else {
-    if (!gameOverBtn) {
-      gameOverBtn = makeText("[ Click to Respawn ]", { fill: 0x44ddff, fontSize: 20 });
-      gameOverBtn.anchor.set(0.5);
-      gameOverBtn.x = w / 2;
-      gameOverBtn.y = 520;
-      gameOverBtn.eventMode = "static";
-      gameOverBtn.cursor = "pointer";
-      gameOverBtn.on("pointertap", () => {
-        ws.send(JSON.stringify({ type: "restart" }));
-      });
-      gameOverLayer.addChild(gameOverBtn);
-    }
+  if (!gameOverBtn) {
+    const msg = makeText("Waiting for round to end...", { fill: 0x888899, fontSize: 16 });
+    msg.anchor.set(0.5);
+    msg.x = w / 2;
+    msg.y = 530;
+    gameOverLayer.addChild(msg);
+    gameOverBtn = msg;
   }
+}
+
+function createGameOverButton(w: number): Text {
+  const msg = makeText("Waiting for round to end...", { fill: 0x888899, fontSize: 16 });
+  msg.anchor.set(0.5);
+  msg.x = w / 2;
+  msg.y = 530;
+  gameOverBtn = msg;
+  return msg;
 }
 
 function hideGameOver(): void {
   gameOverLayer.visible = false;
+}
+
+// ── Lobby UI ──────────────────────────────────────────────────────────────
+
+const LOBBY_COLORS = [0xffff00, 0x44ddff, 0xff6644, 0x44ff88, 0xff44ff, 0xff8844, 0x8888ff, 0x44ffff];
+let lobbyOverlay: HTMLDivElement | null = null;
+let localReady = false;
+
+function showLobby(): void {
+  hideLobby();
+  const overlay = document.createElement('div');
+  overlay.id = 'lobby-overlay';
+  overlay.innerHTML = `
+    <div class="nd">
+      <h1>🚀 Simple Asteroids</h1>
+      <p class="lobby-players-title">Waiting for players...</p>
+      <div class="lobby-players"></div>
+      <div class="lobby-colors">
+        ${LOBBY_COLORS.map(c => `<button class="lobby-color-swatch" data-color="${c}" style="background:#${c.toString(16).padStart(6, '0')}"></button>`).join('')}
+      </div>
+      <button class="lobby-ready-btn">Not Ready — Click to Ready Up</button>
+      <button class="lobby-start-btn" style="display:none">▶ Start Game</button>
+      <p class="hint">ESC — leave game &nbsp;·&nbsp; Ready up, then click Start</p>
+    </div>`;
+  document.body.appendChild(overlay);
+  lobbyOverlay = overlay;
+
+  // Color picker
+  overlay.querySelectorAll('.lobby-color-swatch').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const color = parseInt((btn as HTMLElement).dataset.color!);
+      ws.send(JSON.stringify({ type: 'setColor', color }));
+      overlay.querySelectorAll('.lobby-color-swatch').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+    });
+  });
+
+  // Ready toggle
+  const readyBtn = overlay.querySelector<HTMLButtonElement>('.lobby-ready-btn')!;
+  readyBtn.addEventListener('click', () => {
+    localReady = !localReady;
+    ws.send(JSON.stringify({ type: 'ready', ready: localReady }));
+  });
+
+  // Start game
+  const startBtn = overlay.querySelector<HTMLButtonElement>('.lobby-start-btn')!;
+  startBtn.addEventListener('click', () => {
+    ws.send(JSON.stringify({ type: 'startGame' }));
+  });
+
+  // Before game starts, hide the game layer
+  gameLayer.visible = false;
+  hudLayer.visible = false;
+  debugContainer.visible = false;
+}
+
+function hideLobby(): void {
+  if (lobbyOverlay) {
+    lobbyOverlay.remove();
+    lobbyOverlay = null;
+  }
+  gameLayer.visible = true;
+  hudLayer.visible = true;
+  debugContainer.visible = true;
+}
+
+function updateLobby(data: Record<string, unknown>): void {
+  if (!lobbyOverlay) return;
+  const playersData = data.players as Array<{ id: string; name: string; color: number; ready: boolean }> | undefined;
+  if (!playersData) return;
+
+  if (data.hostId !== undefined) {
+    hostId = (data.hostId as string) ?? null;
+  }
+
+  const listEl = lobbyOverlay.querySelector('.lobby-players');
+  if (!listEl) return;
+
+  const isHost = localId === hostId;
+
+  listEl.innerHTML = playersData.map(p => {
+    const colorHex = '#' + (p.color as number).toString(16).padStart(6, '0');
+    const check = p.ready ? '✅' : '⏳';
+    const showKick = isHost && p.id !== localId;
+    const kickBtn = showKick
+      ? `<button class="lobby-kick-btn" data-target="${p.id}">×</button>`
+      : '';
+    return `<div class="lobby-player-row ${p.id === localId ? 'is-me' : ''}">
+      <span class="lobby-player-color" style="background:${colorHex}"></span>
+      <span class="lobby-player-name">${escHtml(p.name)}${p.id === hostId ? ' 👑' : ''}</span>
+      <span class="lobby-player-ready">${check}</span>
+      ${kickBtn}
+    </div>`;
+  }).join('');
+
+  if (isHost) {
+    listEl.querySelectorAll('.lobby-kick-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetId = (btn as HTMLElement).dataset.target;
+        if (targetId) ws.send(JSON.stringify({ type: 'kick', targetId }));
+      });
+    });
+  }
+
+  const readyBtn = lobbyOverlay.querySelector<HTMLButtonElement>('.lobby-ready-btn');
+  if (readyBtn) {
+    readyBtn.textContent = localReady ? '✅ Ready! Click to unready' : 'Not Ready — Click to Ready Up';
+  }
+
+  const allReady = playersData.length > 0 && playersData.every(p => p.ready);
+  const titleEl = lobbyOverlay.querySelector('.lobby-players-title');
+  if (titleEl) {
+    titleEl.textContent = allReady ? 'All players ready!' : 'Waiting for players to ready up...';
+  }
+
+  const startBtn = lobbyOverlay.querySelector<HTMLButtonElement>('.lobby-start-btn');
+  if (startBtn) {
+    startBtn.style.display = allReady ? 'block' : 'none';
+  }
+}
+
+function escHtml(s: string): string {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
 }
 
 app.ticker.add(() => {
@@ -514,6 +678,10 @@ app.ticker.add(() => {
   gameLayer.scale.set(zoom);
 
   updateDebugViews(pp, pf);
+
+  if (gameOverLayer.visible) {
+    drawGameOverMap();
+  }
 });
 
 function updateDebugViews(camPP: Vec3, camPF: Vec3): void {
@@ -659,17 +827,27 @@ function colorForIndex(index: number): number {
   return PEER_COLORS[index % PEER_COLORS.length];
 }
 
-function ensurePlayer(id: string, name?: string): PlayerEntry {
-  if (players.has(id)) return players.get(id) as PlayerEntry;
+function ensurePlayer(id: string, name?: string, color?: number): PlayerEntry {
+  if (players.has(id)) {
+    const existing = players.get(id) as PlayerEntry;
+    if (name !== undefined) existing.name = name;
+    if (color !== undefined) {
+      existing.color = color;
+      existing.sprite.tint = color;
+      existing.label.style = new TextStyle({ ...BASE_STYLE, fontSize: 11, fill: id === localId ? 0xffff00 : 0xddddee });
+    }
+    return existing;
+  }
 
   const isMe = id === localId;
   const displayName = name ?? id.slice(0, 8);
+  const tintColor = color ?? (isMe ? 0xffff00 : colorForIndex(players.size));
 
   const container = new Container();
 
   const sprite = Sprite.from(ASSET_PATHS.player);
   sprite.anchor.set(0.5);
-  sprite.tint = isMe ? 0xffff00 : colorForIndex(players.size);
+  sprite.tint = tintColor;
 
   const label = makeText(displayName, {
     fontSize: 11,
@@ -689,6 +867,7 @@ function ensurePlayer(id: string, name?: string): PlayerEntry {
     score: 0,
     lives: 3,
     name: displayName,
+    color: tintColor,
     isNPC: id.startsWith('npc_'),
   };
   players.set(id, entry);
@@ -700,6 +879,13 @@ function dropPlayer(id: string): void {
   if (!p) return;
   gameLayer.removeChild(p.container);
   players.delete(id);
+}
+
+function clearPlayers(): void {
+  for (const [, p] of players) {
+    gameLayer.removeChild(p.container);
+  }
+  players.clear();
 }
 
 function movePlayer(id: string, pos: Vec3, forward?: Vec3): void {
@@ -753,6 +939,9 @@ const keys = new Set<string>();
 window.addEventListener('keydown', (e: KeyboardEvent) => {
   keys.add(e.code);
   if (e.code === 'Space') e.preventDefault();
+  if (e.code === 'Escape') {
+    ws.send(JSON.stringify({ type: "surrender" }));
+  }
 });
 
 window.addEventListener('keyup', (e: KeyboardEvent) => {
@@ -828,14 +1017,29 @@ function handleMessage(e: MessageEvent): void {
   switch (data.type) {
     case 'connected':
       localId = data.id as string;
-      localLives = (data.lives as number) ?? 3;
-      updateLivesDisplay();
+      hostId = (data.hostId as string) ?? null;
+      if (data.inGame) {
+        hideLobby();
+      } else {
+        showLobby();
+      }
       break;
 
     case 'playerJoined': {
       const id = data.id as string;
       const name = data.name as string | undefined;
-      ensurePlayer(id, name);
+      const color = data.color as number | undefined;
+      const p = ensurePlayer(id, name, color);
+      if (data.x !== undefined) {
+        p.targetPos = { x: data.x as number, y: data.y as number, z: data.z as number };
+        p.currentPos = { ...p.targetPos };
+      }
+      if (data.fx !== undefined) {
+        p.forward = { x: data.fx as number, y: data.fy as number, z: data.fz as number };
+      }
+      if (data.isNPC !== undefined) {
+        p.isNPC = Boolean(data.isNPC);
+      }
       refreshScoreboard();
       break;
     }
@@ -1004,6 +1208,53 @@ function handleMessage(e: MessageEvent): void {
       }
       break;
     }
+
+    case 'roundOver': {
+      hideGameOver();
+      showLobby();
+      break;
+    }
+
+    case 'gameStarted': {
+      hideGameOver();
+      hideLobby();
+      clearPlayers();
+      const list = data.players as Array<{
+        id: string; name: string; color: number; isNPC: boolean;
+        x: number; y: number; z: number;
+        fx: number; fy: number; fz: number;
+        score: number; lives: number;
+      }> | undefined;
+      if (list) {
+        for (const p of list) {
+          const entry = ensurePlayer(p.id, p.name, p.color);
+          entry.targetPos = { x: p.x, y: p.y, z: p.z };
+          entry.currentPos = { ...entry.targetPos };
+          entry.forward = { x: p.fx, y: p.fy, z: p.fz };
+          entry.score = p.score ?? 0;
+          entry.lives = p.lives ?? 3;
+          entry.isNPC = p.isNPC ?? false;
+          if (p.id === localId) {
+            localLives = entry.lives;
+            updateLivesDisplay();
+          }
+        }
+      }
+      refreshScoreboard();
+      break;
+    }
+
+    case 'lobbyState':
+    case 'lobbyUpdate': {
+      updateLobby(data);
+      break;
+    }
+
+    case 'hostChanged': {
+      hostId = data.hostId as string | undefined ?? null;
+      updateLobby({ type: 'lobbyUpdate' });
+      break;
+    }
   }
 }
 
@@ -1014,7 +1265,7 @@ function connect(): void {
   ws = new PartySocket({
     host: PARTY_HOST,
     party: "game-server",
-    room: "game",
+    room: currentRoom,
     startClosed: true,
   });
 
@@ -1028,6 +1279,7 @@ function connect(): void {
 
   ws.addEventListener('close', () => {
     connected = false;
+    hideLobby();
     setStatus('✗ Disconnected — reconnecting…', 0xff4444);
   });
 
@@ -1039,18 +1291,26 @@ function connect(): void {
 function showNameEntry(): void {
   const overlay = document.createElement('div');
   overlay.id = 'name-overlay';
+
+  const isPrivateRoom = currentRoom !== 'game';
+  const roomHint = isPrivateRoom
+    ? `<p class="room-key">Room: <code>${currentRoom}</code></p>`
+    : '<p>Join the public game, or create a private room for friends.</p>';
+
   overlay.innerHTML = `
     <div class="nd">
       <h1>🚀 Simple Asteroids</h1>
-      <p>Enter your pilot name to join:</p>
+      ${roomHint}
       <input id="pname" type="text" maxlength="20" placeholder="Ace Pilot" />
-      <button id="join-btn">Launch!</button>
-      <p class="hint">WASD / ↑←↓→ — fly &nbsp;·&nbsp; SPACE — shoot</p>
+      <button id="join-btn">${isPrivateRoom ? 'Join Room' : 'Join Public Game'}</button>
+      ${isPrivateRoom ? '' : '<button id="create-room-btn">Create Private Room</button>'}
+      <p class="hint">WASD / ↑←↓→ — fly &nbsp;·&nbsp; SPACE — shoot &nbsp;·&nbsp; ESC — surrender</p>
     </div>`;
   document.body.appendChild(overlay);
 
   const input = overlay.querySelector<HTMLInputElement>('#pname') as HTMLInputElement;
-  const btn = overlay.querySelector<HTMLButtonElement>('#join-btn') as HTMLButtonElement;
+  const joinBtn = overlay.querySelector<HTMLButtonElement>('#join-btn') as HTMLButtonElement;
+  const createBtn = overlay.querySelector<HTMLButtonElement>('#create-room-btn');
   input.focus();
 
   const join = (): void => {
@@ -1060,7 +1320,15 @@ function showNameEntry(): void {
     connect();
   };
 
-  btn.addEventListener('click', join);
+  const createRoom = (): void => {
+    currentRoom = generateRoomKey();
+    setRoomInURL(currentRoom);
+    overlay.remove();
+    showNameEntry();
+  };
+
+  joinBtn.addEventListener('click', join);
+  if (createBtn) createBtn.addEventListener('click', createRoom);
   input.addEventListener('keydown', (e: KeyboardEvent) => {
     if (e.key === 'Enter') join();
   });

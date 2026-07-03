@@ -98,6 +98,34 @@ canvas {
   box-shadow: 0 0 18px rgba(255, 255, 0, 0.35);
 }
 
+.nd .room-key {
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+  color: #88ccff;
+}
+
+.nd .room-key code {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  font-family: inherit;
+}
+
+#create-room-btn {
+  margin-top: 0.6rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #aaa;
+  font-size: 0.9rem;
+}
+
+#create-room-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #fff;
+}
+
 .nd .hint {
   margin-top: 1.2rem;
   font-size: 0.78rem;
@@ -156,4 +184,147 @@ canvas {
   background: rgba(255, 200, 0, 0.2);
   border-color: #ffcc00;
   color: #ffcc00;
+}
+
+/* ── Lobby overlay ────────────────────────────────────────────────────────── */
+#lobby-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 17, 0.92);
+  z-index: 60;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+.lobby-players-title {
+  margin-bottom: 0.75rem !important;
+  font-size: 0.85rem !important;
+}
+
+.lobby-players {
+  margin-bottom: 1rem;
+  text-align: left;
+}
+
+.lobby-player-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
+.lobby-player-row.is-me {
+  background: rgba(255, 255, 0, 0.08);
+}
+
+.lobby-player-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  flex-shrink: 0;
+}
+
+.lobby-player-name {
+  flex: 1;
+  color: #ccc;
+}
+
+.lobby-player-row.is-me .lobby-player-name {
+  color: #ffff00;
+}
+
+.lobby-kick-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 80, 80, 0.4);
+  background: rgba(255, 80, 80, 0.1);
+  color: #ff6666;
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.lobby-kick-btn:hover {
+  background: rgba(255, 80, 80, 0.3);
+  border-color: rgba(255, 80, 80, 0.7);
+}
+
+.lobby-player-ready {
+  font-size: 0.9rem;
+}
+
+.lobby-colors {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+.lobby-color-swatch {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.lobby-color-swatch:hover {
+  transform: scale(1.15);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.lobby-color-swatch.selected {
+  border-color: #fff;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
+  transform: scale(1.15);
+}
+
+.lobby-ready-btn {
+  display: block;
+  width: 100%;
+  padding: 0.7rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  color: #ccc;
+  font-size: 0.9rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+  letter-spacing: 0.03em;
+}
+
+.lobby-ready-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.lobby-start-btn {
+  display: block;
+  width: 100%;
+  padding: 0.8rem;
+  margin-top: 0.5rem;
+  background: rgba(0, 255, 100, 0.12);
+  border: 1px solid #00ff66;
+  border-radius: 8px;
+  color: #00ff66;
+  font-size: 1.05rem;
+  font-family: inherit;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background 0.2s, box-shadow 0.2s;
+  letter-spacing: 0.05em;
+}
+
+.lobby-start-btn:hover {
+  background: rgba(0, 255, 100, 0.25);
+  box-shadow: 0 0 18px rgba(0, 255, 100, 0.35);
 }
