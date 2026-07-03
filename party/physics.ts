@@ -105,23 +105,30 @@ export interface NpcInput {
   shoot: boolean;
 }
 
+export interface BoidInfluence {
+  pos: Vec3;
+  repel: boolean;
+  range: number;
+  strength: number;
+}
+
 /**
- * Boids-inspired separation: compute signed angle to steer away from nearby ships.
- * Returns angle in radians (positive = steer right, negative = steer left).
- * Returns 0 if no steering needed.
+ * Compute signed steering angle based on multiple boid-like influences.
+ * Positive = steer right, negative = steer left.  Returns 0 if no significant steering.
  */
-function boidsSteer(pos: Vec3, fwd: Vec3, nearby: Vec3[], sepDistance: number): number {
+function boidsSteer(pos: Vec3, fwd: Vec3, influences: BoidInfluence[]): number {
   let steer = { x: 0, y: 0, z: 0 };
-  for (const other of nearby) {
-    const away = vSub(pos, other);
-    const t = tangentOf(away, pos);
-    const d = vLen(t);
-    if (d < 0.001 || d > sepDistance) continue;
-    steer = vAdd(steer, vScale(vNorm(t), (sepDistance - d) / sepDistance));
+  for (const inf of influences) {
+    const diff = inf.repel ? vSub(pos, inf.pos) : vSub(inf.pos, pos);
+    const t = tangentOf(diff, pos);
+    const dist = vLen(t);
+    if (dist < 0.001 || dist > inf.range) continue;
+    const weight = (inf.range - dist) / inf.range;
+    steer = vAdd(steer, vScale(vNorm(t), weight * inf.strength));
   }
   if (vLen(steer) < 0.001) return 0;
-  const n = vNorm(pos);
   const desired = vNorm(steer);
+  const n = vNorm(pos);
   const right = vNorm(vCross(fwd, n));
   const sin = vDot(desired, right);
   const cos = vDot(desired, fwd);
@@ -131,11 +138,11 @@ function boidsSteer(pos: Vec3, fwd: Vec3, nearby: Vec3[], sepDistance: number): 
 export function npcAI(
   input: NpcInput,
   dt: number,
-  nearbyShips: Vec3[],
+  influences: BoidInfluence[],
   pos: Vec3,
   fwd: Vec3,
 ): void {
-  const steerAngle = boidsSteer(pos, fwd, nearbyShips, 100);
+  const steerAngle = boidsSteer(pos, fwd, influences);
 
   if (Math.abs(steerAngle) > 0.15) {
     input.rotateLeft = steerAngle < 0;

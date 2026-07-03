@@ -444,7 +444,8 @@ function updateDebugViews(camPP: Vec3, camPF: Vec3): void {
     c.addChild(gfx);
 
     const dvPP = p.currentPos;
-    const dvPF = { x: 0, y: 0, z: 1 };
+    const lp = localId ? players.get(localId) : undefined;
+    const dvPF = lp ? lp.forward : { x: 0, y: 0, z: 1 };
     const scale = 0.2;
     const cx = viewSize / 2;
     const cy = viewSize / 2;

@@ -11,7 +11,7 @@ import {
   type PowerUpType, POWERUP_TYPES,
   vAdd, vSub, vScale, vLen, vNorm,
   tangentOf, randomPos, sphereAdvance, rotateForward, initialTangent,
-  npcAI,
+  npcAI, BoidInfluence,
 } from "./physics";
 
 // ── XState machines ──
@@ -372,13 +372,44 @@ export class GameServer extends Server {
       if (!p.actor.getSnapshot().matches("alive")) continue;
 
       if (p.isNPC) {
-        const nearby: Vec3[] = [];
+        const influences: BoidInfluence[] = [];
+
         for (const [oid, o] of this.players) {
           if (oid === id || !o.actor.getSnapshot().matches("alive")) continue;
           const d = vLen(vSub(p.pos, o.pos));
-          if (d < 150) nearby.push(o.pos);
+          if (d < 100) {
+            influences.push({ pos: o.pos, repel: true, range: 100, strength: 1 });
+          }
         }
-        npcAI(p, dt, nearby, p.pos, p.forward);
+
+        // Follow/avoid local players
+        for (const [, o] of this.players) {
+          if (o.isNPC || !o.actor.getSnapshot().matches("alive")) continue;
+          const d = vLen(vSub(p.pos, o.pos));
+          if (d < 400) {
+            if (d < 80) {
+              influences.push({ pos: o.pos, repel: true, range: 80, strength: 2 });
+            } else {
+              influences.push({ pos: o.pos, repel: false, range: 400, strength: 1.5 });
+            }
+          }
+        }
+
+        for (const [, b] of this.bullets) {
+          const d = vLen(vSub(p.pos, b.pos));
+          if (d < 100) {
+            influences.push({ pos: b.pos, repel: true, range: 100, strength: 3 });
+          }
+        }
+
+        for (const [, a] of this.asteroids) {
+          const d = vLen(vSub(p.pos, a.pos));
+          if (d < 60) {
+            influences.push({ pos: a.pos, repel: true, range: 60, strength: 2 });
+          }
+        }
+
+        npcAI(p, dt, influences, p.pos, p.forward);
       }
 
       if (p.rotateLeft) {

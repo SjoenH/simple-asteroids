@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import {
-  npcAI, type NpcInput,
+  npcAI, type NpcInput, BoidInfluence,
   vSub, vLen,
   PLAYER_RADII, ASTEROID_RADII,
   PLAYER_KILL_SCORE, INITIAL_LIVES,
@@ -69,7 +69,7 @@ describe("npcAI", () => {
     const n = makeNpc();
     const pos: Vec3 = { x: 0, y: 0, z: 1000 };
     const fwd: Vec3 = { x: 0, y: 1, z: 0 };
-    const nearby = [{ x: 30, y: 0, z: 1000 }];
+    const nearby: BoidInfluence[] = [{ pos: { x: 30, y: 0, z: 1000 }, repel: true, range: 100, strength: 1 }];
     npcAI(n, 1 / 30, nearby, pos, fwd);
     expect(n.rotateLeft).toBe(true);
     expect(n.rotateRight).toBe(false);
@@ -79,7 +79,7 @@ describe("npcAI", () => {
     const n = makeNpc();
     const pos: Vec3 = { x: 0, y: 0, z: 1000 };
     const fwd: Vec3 = { x: 0, y: 1, z: 0 };
-    const nearby = [{ x: -30, y: 0, z: 1000 }];
+    const nearby: BoidInfluence[] = [{ pos: { x: -30, y: 0, z: 1000 }, repel: true, range: 100, strength: 1 }];
     npcAI(n, 1 / 30, nearby, pos, fwd);
     expect(n.rotateRight).toBe(true);
     expect(n.rotateLeft).toBe(false);
