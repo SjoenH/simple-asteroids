@@ -246,6 +246,34 @@ window.addEventListener('keyup', (e: KeyboardEvent) => {
   keys.delete(e.code);
 });
 
+// ── Mobile touch controls ─────────────────────────────────────────────────────
+
+function setupTouchControls(): void {
+  const overlay = document.createElement('div');
+  overlay.id = 'touch-controls';
+  overlay.innerHTML = `
+    <button class="tc-btn" data-key="KeyA">◀</button>
+    <button class="tc-btn" data-key="KeyW">▲</button>
+    <button class="tc-btn" data-key="KeyD">▶</button>
+    <button class="tc-btn tc-shoot" data-key="Space">⚡</button>
+  `;
+  document.body.appendChild(overlay);
+
+  for (const btn of overlay.querySelectorAll<HTMLElement>('.tc-btn')) {
+    const code = btn.dataset.key!;
+    btn.addEventListener('touchstart', (e) => { e.preventDefault(); keys.add(code); });
+    btn.addEventListener('touchend', (e) => { e.preventDefault(); keys.delete(code); });
+    btn.addEventListener('touchcancel', () => { keys.delete(code); });
+    btn.addEventListener('mousedown', () => { keys.add(code); });
+    btn.addEventListener('mouseup', () => { keys.delete(code); });
+    btn.addEventListener('mouseleave', () => { keys.delete(code); });
+  }
+}
+
+if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+  setupTouchControls();
+}
+
 let lastInputSent = 0;
 
 function sendInput(): void {
