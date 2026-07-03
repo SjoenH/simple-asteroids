@@ -456,8 +456,16 @@ function updateDebugViews(camPP: Vec3, camPF: Vec3): void {
       const esy = es.y * scale + cy;
       if (esx < -5 || esx > viewSize + 5 || esy < -5 || esy > viewSize + 5) continue;
       const color = eid === id ? 0xffff00 : eid === localId ? 0x44ddff : 0x88ff88;
+      const a = forwardScreenAngle(ep.currentPos, ep.forward, dvPP, dvPF);
+      const sz = 4;
+      const tipX = esx + Math.sin(a) * sz;
+      const tipY = esy - Math.cos(a) * sz;
+      const lx = esx + Math.sin(a + 2.3) * sz * 0.55;
+      const ly = esy - Math.cos(a + 2.3) * sz * 0.55;
+      const rx = esx + Math.sin(a - 2.3) * sz * 0.55;
+      const ry = esy - Math.cos(a - 2.3) * sz * 0.55;
       gfx.setFillStyle({ color, alpha: 0.9 });
-      gfx.circle(esx, esy, 3);
+      gfx.poly([tipX, tipY, lx, ly, rx, ry]);
       gfx.fill();
     }
 
