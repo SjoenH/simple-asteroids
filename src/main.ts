@@ -404,7 +404,7 @@ function updateDebugViews(): void {
     c.addChild(gfx);
 
     const pp = p.currentPos;
-    const pf = p.forward;
+    const pf = { x: 0, y: 0, z: 1 };
     const scale = 0.2;
     const cx = viewSize / 2;
     const cy = viewSize / 2;

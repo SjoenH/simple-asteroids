@@ -135,12 +135,11 @@ export function npcAI(
   pos: Vec3,
   fwd: Vec3,
 ): void {
-  const steerAngle = boidsSteer(pos, fwd, nearbyShips, 150);
+  const steerAngle = boidsSteer(pos, fwd, nearbyShips, 100);
 
-  if (Math.abs(steerAngle) > 0.05) {
+  if (Math.abs(steerAngle) > 0.15) {
     input.rotateLeft = steerAngle < 0;
     input.rotateRight = steerAngle > 0;
-    input.aiSwitchTimer = Math.min(input.aiSwitchTimer, 0.3);
   } else {
     input.aiSwitchTimer -= dt;
     if (input.aiSwitchTimer <= 0) {
