@@ -56,6 +56,14 @@ export function vLen(v: Vec3): number {
   return Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
 }
 
+/**
+ * Returns the squared length of a vector (avoids expensive sqrt).
+ * Use for distance comparisons: if (vLenSq(diff) < radius*radius) { ... }
+ */
+export function vLenSq(v: Vec3): number {
+  return v.x * v.x + v.y * v.y + v.z * v.z;
+}
+
 export function vNorm(v: Vec3): Vec3 {
   const l = vLen(v);
   return l === 0 ? { x: 0, y: 0, z: 1 } : vScale(v, 1 / l);

@@ -9,7 +9,7 @@ import {
   PLAYER_KILL_SCORE, INVISIBILITY_DURATION, MULTI_CANNON_DURATION, MULTI_CANNON_SPREAD,
   NPC_COUNT, NPC_NAMES,
   type PowerUpType, POWERUP_TYPES,
-  vAdd, vSub, vScale, vLen, vNorm,
+  vAdd, vSub, vScale, vLen, vLenSq, vNorm,
   tangentOf, randomPos, sphereAdvance, rotateForward, initialTangent,
   npcAI, BoidInfluence,
 } from "./physics";
@@ -507,17 +507,17 @@ export class GameServer extends Server {
 
         for (const [oid, o] of this.players) {
           if (oid === id || !o.actor.getSnapshot().matches("alive")) continue;
-          const d = vLen(vSub(p.pos, o.pos));
-          if (d < 60) {
+          const distSq = vLenSq(vSub(p.pos, o.pos));
+          if (distSq < 60 * 60) {
             influences.push({ pos: o.pos, repel: true, range: 60, strength: 1 });
           }
         }
 
         for (const [, o] of this.players) {
           if (o.isNPC || !o.actor.getSnapshot().matches("alive")) continue;
-          const d = vLen(vSub(p.pos, o.pos));
-          if (d < 200) {
-            if (d < 40) {
+          const distSq = vLenSq(vSub(p.pos, o.pos));
+          if (distSq < 200 * 200) {
+            if (distSq < 40 * 40) {
               influences.push({ pos: o.pos, repel: true, range: 40, strength: 2 });
             } else {
               influences.push({ pos: o.pos, repel: false, range: 200, strength: 1.5 });
@@ -526,15 +526,15 @@ export class GameServer extends Server {
         }
 
         for (const [, b] of this.bullets) {
-          const d = vLen(vSub(p.pos, b.pos));
-          if (d < 60) {
+          const distSq = vLenSq(vSub(p.pos, b.pos));
+          if (distSq < 60 * 60) {
             influences.push({ pos: b.pos, repel: true, range: 60, strength: 3 });
           }
         }
 
         for (const [, a] of this.asteroids) {
-          const d = vLen(vSub(p.pos, a.pos));
-          if (d < 40) {
+          const distSq = vLenSq(vSub(p.pos, a.pos));
+          if (distSq < 40 * 40) {
             influences.push({ pos: a.pos, repel: true, range: 40, strength: 2 });
           }
         }
@@ -560,7 +560,7 @@ export class GameServer extends Server {
 
       const speed = vLen(p.vel);
       if (speed > MAX_SPEED) {
-        p.vel = vScale(vNorm(p.vel), MAX_SPEED);
+        p.vel = vScale(p.vel, MAX_SPEED / speed);
       }
 
       const moved = sphereAdvance(p.pos, p.vel, dt);
@@ -582,20 +582,6 @@ export class GameServer extends Server {
           this.broadcast(JSON.stringify({ type: "effectExpired", id, effect: "multiCannon" }));
         }
       }
-
-      this.broadcast(
-        JSON.stringify({
-          type: "playerMoved",
-          id,
-          x: p.pos.x,
-          y: p.pos.y,
-          z: p.pos.z,
-          fx: p.forward.x,
-          fy: p.forward.y,
-          fz: p.forward.z,
-          invisible: p.invisibilityTimer > 0 ? true : undefined,
-        }),
-      );
     }
 
     // ── Power-ups ──
@@ -616,8 +602,8 @@ export class GameServer extends Server {
       }
       for (const [pid, p] of this.players) {
         if (!p.actor.getSnapshot().matches("alive")) continue;
-        const d = vLen(vSub(p.pos, pu.pos));
-        if (d < POWERUP_RADIUS) {
+        const distSq = vLenSq(vSub(p.pos, pu.pos));
+        if (distSq < POWERUP_RADIUS * POWERUP_RADIUS) {
           this.collectPowerUp(pid, id);
           break;
         }
@@ -633,12 +619,13 @@ export class GameServer extends Server {
       const speed = vLen(b.vel);
       const moved = sphereAdvance(b.pos, b.vel, dt);
       b.pos = moved.pos;
-      b.vel = vScale(vNorm(moved.vel), speed);
+      const newSpeed = vLen(moved.vel);
+      if (newSpeed > 0.001) {
+        b.vel = vScale(moved.vel, speed / newSpeed);
+      } else {
+        b.vel = moved.vel;
+      }
       b.life -= dt;
-
-      this.broadcast(
-        JSON.stringify({ type: "bulletMoved", id, x: b.pos.x, y: b.pos.y, z: b.pos.z }),
-      );
     }
 
     // ── Asteroids ──
@@ -646,26 +633,23 @@ export class GameServer extends Server {
       const moved = sphereAdvance(a.pos, a.vel, dt);
       a.pos = moved.pos;
       a.vel = moved.vel;
-
-      this.broadcast(
-        JSON.stringify({ type: "asteroidMoved", id, x: a.pos.x, y: a.pos.y, z: a.pos.z, size: a.size }),
-      );
     }
 
     // ── Bullet-asteroid collisions ──
-    const deadBullets: string[] = [];
+    const deadBullets = new Set<string>();
     const hitAsteroids: Map<string, string[]> = new Map();
 
     for (const [bid, b] of this.bullets) {
       if (b.life <= 0) {
-        deadBullets.push(bid);
+        deadBullets.add(bid);
         continue;
       }
 
       for (const [aid, a] of this.asteroids) {
-        const d = vLen(vSub(b.pos, a.pos));
-        if (d < ASTEROID_RADII[a.size]) {
-          deadBullets.push(bid);
+        const distSq = vLenSq(vSub(b.pos, a.pos));
+        const radiusSq = ASTEROID_RADII[a.size] * ASTEROID_RADII[a.size];
+        if (distSq < radiusSq) {
+          deadBullets.add(bid);
           const list = hitAsteroids.get(aid) ?? [];
           list.push(b.ownerId);
           hitAsteroids.set(aid, list);
@@ -676,15 +660,15 @@ export class GameServer extends Server {
 
     // ── Bullet-player collisions ──
     for (const [bid, b] of this.bullets) {
-      if (deadBullets.includes(bid)) continue;
+      if (deadBullets.has(bid)) continue;
       if (b.life <= 0) continue;
 
       for (const [pid, p] of this.players) {
         if (!p.actor.getSnapshot().matches("alive")) continue;
         if (b.ownerId === pid) continue;
-        const d = vLen(vSub(b.pos, p.pos));
-        if (d < 15) {
-          deadBullets.push(bid);
+        const distSq = vLenSq(vSub(b.pos, p.pos));
+        if (distSq < 15 * 15) {
+          deadBullets.add(bid);
           p.actor.send({ type: "HIT" });
           const livesLeft = p.actor.getSnapshot().context.lives;
           if (livesLeft === 0) p.actor.send({ type: "GAME_OVER" });
@@ -742,8 +726,9 @@ export class GameServer extends Server {
       if (!p.actor.getSnapshot().matches("alive")) continue;
 
       for (const [aid, a] of this.asteroids) {
-        const d = vLen(vSub(p.pos, a.pos));
-        if (d < PLAYER_RADII[a.size]) {
+        const distSq = vLenSq(vSub(p.pos, a.pos));
+        const radiusSq = PLAYER_RADII[a.size] * PLAYER_RADII[a.size];
+        if (distSq < radiusSq) {
           p.actor.send({ type: "HIT" });
           const livesLeft = p.actor.getSnapshot().context.lives;
           if (livesLeft === 0) p.actor.send({ type: "GAME_OVER" });
@@ -777,10 +762,6 @@ export class GameServer extends Server {
             ownerId: id,
             life: BULLET_LIFE,
           });
-          const b = this.bullets.get(bid)!;
-          this.broadcast(
-            JSON.stringify({ type: "bulletMoved", id: bid, x: b.pos.x, y: b.pos.y, z: b.pos.z }),
-          );
         }
         p.shootCooldown = SHOOT_COOLDOWN;
       }
@@ -790,6 +771,58 @@ export class GameServer extends Server {
     if (this.asteroids.size === 0) {
       this.spawnAsteroids(6);
     }
+
+    // ── Broadcast batched game state update ──
+    // Collect state AFTER all deletions to ensure only existing entities are sent
+    const updates: {
+      type: "gameState";
+      players: Array<{ id: string; x: number; y: number; z: number; fx: number; fy: number; fz: number; invisible?: boolean }>;
+      bullets: Array<{ id: string; x: number; y: number; z: number }>;
+      asteroids: Array<{ id: string; x: number; y: number; z: number; size: number }>;
+    } = {
+      type: "gameState",
+      players: [],
+      bullets: [],
+      asteroids: [],
+    };
+
+    // Collect current player states
+    for (const [id, p] of this.players) {
+      if (!p.actor.getSnapshot().matches("alive")) continue;
+      updates.players.push({
+        id,
+        x: p.pos.x,
+        y: p.pos.y,
+        z: p.pos.z,
+        fx: p.forward.x,
+        fy: p.forward.y,
+        fz: p.forward.z,
+        invisible: p.invisibilityTimer > 0 ? true : undefined,
+      });
+    }
+
+    // Collect current bullet states (after deletions)
+    for (const [id, b] of this.bullets) {
+      updates.bullets.push({
+        id,
+        x: b.pos.x,
+        y: b.pos.y,
+        z: b.pos.z,
+      });
+    }
+
+    // Collect current asteroid states (after deletions)
+    for (const [id, a] of this.asteroids) {
+      updates.asteroids.push({
+        id,
+        x: a.pos.x,
+        y: a.pos.y,
+        z: a.pos.z,
+        size: a.size,
+      });
+    }
+
+    this.broadcast(JSON.stringify(updates));
 
     // ── Check round over ──
     this.checkRoundOver();

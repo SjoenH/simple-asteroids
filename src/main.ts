@@ -47,6 +47,14 @@ let currentRoom = getRoomFromURL();
 
 interface Vec3 { x: number; y: number; z: number; }
 
+// Physics constants (from party/physics.ts)
+const RADIUS = 1000;
+const ROTATION_SPEED = 3;
+const PLAYER_ACCEL = 300;
+const FRICTION = 0.015;
+const BRAKE_DECEL = 0.08;
+const MAX_SPEED = 400;
+
 function vAdd(a: Vec3, b: Vec3): Vec3 {
   return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
 }
@@ -73,6 +81,18 @@ function vNorm(v: Vec3): Vec3 {
 function tangentOf(v: Vec3, n: Vec3): Vec3 {
   const u = vNorm(n);
   return vSub(v, vScale(u, vDot(v, u)));
+}
+
+function sphereAdvance(pos: Vec3, vel: Vec3, dt: number): { pos: Vec3; vel: Vec3 } {
+  const newPos = vScale(vNorm(vAdd(pos, vScale(vel, dt))), RADIUS);
+  const newVel = tangentOf(vel, newPos);
+  return { pos: newPos, vel: newVel };
+}
+
+function rotateForward(fwd: Vec3, pos: Vec3, angle: number): Vec3 {
+  const n = vNorm(pos);
+  const right = vNorm(vCross(fwd, n));
+  return vNorm(vAdd(vScale(fwd, Math.cos(angle)), vScale(right, Math.sin(angle))));
 }
 
 function radToScreen(q: Vec3, p: Vec3, fwd: Vec3): { x: number; y: number } | null {
@@ -114,6 +134,10 @@ interface PlayerEntry {
   name: string;
   color: number;
   isNPC: boolean;
+  // Client-side prediction
+  vel: Vec3;
+  predictedPos: Vec3;
+  predictedForward: Vec3;
 }
 
 type PowerUpType = 'extraLife' | 'invisibility' | 'multiCannon';
@@ -147,8 +171,6 @@ await app.init({
 document.body.appendChild(app.canvas);
 
 await Assets.load(Object.values(ASSET_PATHS));
-
-const RADIUS = 1000;
 
 function getZoom(): number {
   return Math.max(0.35, Math.min(app.screen.width, app.screen.height) / 900);
@@ -635,7 +657,56 @@ app.ticker.add(() => {
   }
   powerUpGFX.fill();
 
+  // ── Client-side prediction for local player ──
+  if (localPlayer) {
+    const dt = app.ticker.deltaMS / 1000;
+    
+    // Apply input to predicted state
+    const thrust = keys.has('KeyW') || keys.has('ArrowUp');
+    const brake = keys.has('KeyS') || keys.has('ArrowDown');
+    const rotateLeft = keys.has('KeyA') || keys.has('ArrowLeft');
+    const rotateRight = keys.has('KeyD') || keys.has('ArrowRight');
+
+    // Rotate predicted forward
+    if (rotateLeft) {
+      localPlayer.predictedForward = rotateForward(localPlayer.predictedForward, localPlayer.predictedPos, -ROTATION_SPEED * dt);
+    }
+    if (rotateRight) {
+      localPlayer.predictedForward = rotateForward(localPlayer.predictedForward, localPlayer.predictedPos, ROTATION_SPEED * dt);
+    }
+
+    // Apply acceleration
+    if (thrust) {
+      localPlayer.vel = vAdd(localPlayer.vel, vScale(localPlayer.predictedForward, PLAYER_ACCEL * dt));
+    }
+    if (brake) {
+      localPlayer.vel = vScale(localPlayer.vel, 1 - BRAKE_DECEL);
+    }
+
+    // Apply friction
+    localPlayer.vel = vScale(localPlayer.vel, 1 - FRICTION * dt);
+
+    // Clamp velocity
+    const speed = vLen(localPlayer.vel);
+    if (speed > MAX_SPEED) {
+      localPlayer.vel = vScale(localPlayer.vel, MAX_SPEED / speed);
+    }
+
+    // Advance position on sphere
+    const moved = sphereAdvance(localPlayer.predictedPos, localPlayer.vel, dt);
+    localPlayer.predictedPos = moved.pos;
+    localPlayer.vel = moved.vel;
+    localPlayer.predictedForward = vNorm(tangentOf(localPlayer.predictedForward, localPlayer.predictedPos));
+
+    // Use predicted position for camera and rendering
+    localPlayer.currentPos = { ...localPlayer.predictedPos };
+    localPlayer.forward = { ...localPlayer.predictedForward };
+  }
+
   for (const p of players.values()) {
+    // Skip interpolation for local player - we use prediction
+    if (players.get(localId!) === p) continue;
+    
     p.currentPos.x += (p.targetPos.x - p.currentPos.x) * 0.18;
     p.currentPos.y += (p.targetPos.y - p.currentPos.y) * 0.18;
     p.currentPos.z += (p.targetPos.z - p.currentPos.z) * 0.18;
@@ -869,6 +940,10 @@ function ensurePlayer(id: string, name?: string, color?: number): PlayerEntry {
     name: displayName,
     color: tintColor,
     isNPC: id.startsWith('npc_'),
+    // Client-side prediction
+    vel: { x: 0, y: 0, z: 0 },
+    predictedPos: { x: 0, y: 0, z: RADIUS },
+    predictedForward: { x: 0, y: 0, z: 1 },
   };
   players.set(id, entry);
   return entry;
@@ -890,8 +965,38 @@ function clearPlayers(): void {
 
 function movePlayer(id: string, pos: Vec3, forward?: Vec3): void {
   const p = ensurePlayer(id);
-  p.targetPos = pos;
-  if (forward) p.forward = forward;
+  
+  if (id === localId) {
+    // Server reconciliation for local player
+    // Only correct if error is significant
+    const errorX = pos.x - p.predictedPos.x;
+    const errorY = pos.y - p.predictedPos.y;
+    const errorZ = pos.z - p.predictedPos.z;
+    const errorDist = Math.sqrt(errorX * errorX + errorY * errorY + errorZ * errorZ);
+    
+    // Only correct if error is > 10 units (small threshold)
+    if (errorDist > 10) {
+      const blendFactor = 0.05; // Very gentle correction (5% per update)
+      p.predictedPos.x += errorX * blendFactor;
+      p.predictedPos.y += errorY * blendFactor;
+      p.predictedPos.z += errorZ * blendFactor;
+    }
+    
+    if (forward) {
+      // Very gentle forward correction
+      const blendFactor = 0.05;
+      p.predictedForward.x = p.predictedForward.x * (1 - blendFactor) + forward.x * blendFactor;
+      p.predictedForward.y = p.predictedForward.y * (1 - blendFactor) + forward.y * blendFactor;
+      p.predictedForward.z = p.predictedForward.z * (1 - blendFactor) + forward.z * blendFactor;
+      p.predictedForward = vNorm(p.predictedForward);
+    }
+    
+    // Don't update targetPos for local player, we use predicted position
+  } else {
+    // Remote players use normal interpolation
+    p.targetPos = pos;
+    if (forward) p.forward = forward;
+  }
 }
 
 const ASTEROID_SCALES: Record<number, number> = { 1: 1, 2: 0.6, 3: 0.35 };
@@ -1024,6 +1129,36 @@ function handleMessage(e: MessageEvent): void {
         showLobby();
       }
       break;
+
+    case 'gameState': {
+      // Batched game state update (Phase 1 optimization)
+      const players = data.players as Array<{ id: string; x: number; y: number; z: number; fx: number; fy: number; fz: number; invisible?: boolean }> | undefined;
+      const asteroids = data.asteroids as Array<{ id: string; x: number; y: number; z: number; size: number }> | undefined;
+      const bullets = data.bullets as Array<{ id: string; x: number; y: number; z: number }> | undefined;
+
+      if (players) {
+        for (const p of players) {
+          const pos: Vec3 = { x: p.x, y: p.y, z: p.z };
+          const forward: Vec3 = { x: p.fx, y: p.fy, z: p.fz };
+          movePlayer(p.id, pos, forward);
+        }
+      }
+
+      if (asteroids) {
+        for (const a of asteroids) {
+          const pos: Vec3 = { x: a.x, y: a.y, z: a.z };
+          ensureAsteroid(a.id, pos, a.size);
+        }
+      }
+
+      if (bullets) {
+        for (const b of bullets) {
+          const pos: Vec3 = { x: b.x, y: b.y, z: b.z };
+          ensureBullet(b.id, pos);
+        }
+      }
+      break;
+    }
 
     case 'playerJoined': {
       const id = data.id as string;
