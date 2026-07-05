@@ -229,6 +229,18 @@ const BASE_STYLE: Partial<TextStyle> = {
   fill: 0xffffff,
 };
 
+// Cached TextStyle objects to avoid recreation (Phase 2.1 optimization)
+const CACHED_STYLES = {
+  livesActive: new TextStyle({ ...BASE_STYLE, fontSize: 14, fill: 0xff4444 }),
+  livesDead: new TextStyle({ ...BASE_STYLE, fontSize: 14, fill: 0x444444 }),
+  statusGreen: new TextStyle({ ...BASE_STYLE, fill: 0x00ff00 }),
+  statusYellow: new TextStyle({ ...BASE_STYLE, fill: 0xffff00 }),
+  statusOrange: new TextStyle({ ...BASE_STYLE, fill: 0xffaa00 }),
+  statusRed: new TextStyle({ ...BASE_STYLE, fill: 0xff0000 }),
+  playerLabelLocal: new TextStyle({ ...BASE_STYLE, fontSize: 11, fill: 0xffff00 }),
+  playerLabelRemote: new TextStyle({ ...BASE_STYLE, fontSize: 11, fill: 0xddddee }),
+};
+
 function makeText(
   content: string,
   overrides: Partial<TextStyle> = {},
@@ -268,10 +280,7 @@ let localEffects: string[] = [];
 
 function updateLivesDisplay(): void {
   livesLabel.text = '♥'.repeat(Math.max(0, localLives));
-  livesLabel.style = new TextStyle({
-    ...BASE_STYLE, fontSize: 14,
-    fill: localLives > 0 ? 0xff4444 : 0x444444,
-  });
+  livesLabel.style = localLives > 0 ? CACHED_STYLES.livesActive : CACHED_STYLES.livesDead;
 }
 
 function updateEffectDisplay(): void {
@@ -285,25 +294,53 @@ function positionHUD(): void {
 positionHUD();
 app.renderer.on('resize', positionHUD);
 
+// Scoreboard Text object cache (Phase 2.2 optimization)
+const scoreboardEntries = new Map<string, Text>();
+
 function refreshScoreboard(): void {
-  scoreContainer.removeChildren();
   let y = 0;
+  const currentPlayerIds = new Set<string>();
+  
   for (const [id, p] of players) {
+    currentPlayerIds.add(id);
     const isMe = id === localId;
     const livesStr = '♥'.repeat(Math.max(0, p.lives));
-    const entry = makeText(
-      `${isMe ? '▶' : ' '} ${p.name}  ${p.score}  ${livesStr}`,
-      { fontSize: 12, fill: isMe ? 0xffff00 : 0x888899 },
-    );
+    const text = `${isMe ? '▶' : ' '} ${p.name}  ${p.score}  ${livesStr}`;
+    
+    let entry = scoreboardEntries.get(id);
+    if (!entry) {
+      // Create new entry if it doesn't exist
+      entry = makeText(text, { fontSize: 12, fill: isMe ? 0xffff00 : 0x888899 });
+      scoreboardEntries.set(id, entry);
+      scoreContainer.addChild(entry);
+    } else {
+      // Update existing entry
+      entry.text = text;
+      entry.style.fill = isMe ? 0xffff00 : 0x888899;
+    }
+    
     entry.y = y;
-    scoreContainer.addChild(entry);
     y += 16;
+  }
+  
+  // Remove stale entries (players who left)
+  for (const [id, entry] of scoreboardEntries) {
+    if (!currentPlayerIds.has(id)) {
+      scoreContainer.removeChild(entry);
+      entry.destroy();
+      scoreboardEntries.delete(id);
+    }
   }
 }
 
 function setStatus(text: string, color: number): void {
   statusText.text = text;
-  statusText.style = new TextStyle({ ...BASE_STYLE, fill: color });
+  // Use cached styles for common colors
+  if (color === 0x00ff00) statusText.style = CACHED_STYLES.statusGreen;
+  else if (color === 0xffff00) statusText.style = CACHED_STYLES.statusYellow;
+  else if (color === 0xffaa00) statusText.style = CACHED_STYLES.statusOrange;
+  else if (color === 0xff0000) statusText.style = CACHED_STYLES.statusRed;
+  else statusText.style = new TextStyle({ ...BASE_STYLE, fill: color });
 }
 
 function showGameOver(): void {
@@ -596,14 +633,16 @@ app.ticker.add(() => {
   const pf = localPlayer?.forward ?? { x: 0, y: 0, z: 1 };
 
   // ── Stars (ambient particles) ──
+  // Phase 2.3: Batch fill() call
   ambientGFX.clear();
+  ambientGFX.setFillStyle({ color: 0xffffff });
   for (const ap of ambientParticles) {
     const s = radToScreen(ap.pos, pp, pf);
     if (!s) continue;
-    ambientGFX.setFillStyle({ color: 0xffffff, alpha: ap.alpha });
+    ambientGFX.setFillStyle({ alpha: ap.alpha });
     ambientGFX.circle(s.x, s.y, ap.size);
-    ambientGFX.fill();
   }
+  ambientGFX.fill(); // Single fill for all particles
 
   // ── Exhaust particles ──
   exhaustGFX.clear();
@@ -633,7 +672,9 @@ app.ticker.add(() => {
     ep.vel = vScale(ep.vel, 0.97);
     ep.life -= 1 / 60;
     if (ep.life <= 0) {
-      exhaustParticles.splice(i, 1);
+      // Phase 2.4: Swap-and-pop instead of splice
+      exhaustParticles[i] = exhaustParticles[exhaustParticles.length - 1];
+      exhaustParticles.pop();
       continue;
     }
     const s = radToScreen(ep.pos, pp, pf);
@@ -905,7 +946,7 @@ function ensurePlayer(id: string, name?: string, color?: number): PlayerEntry {
     if (color !== undefined) {
       existing.color = color;
       existing.sprite.tint = color;
-      existing.label.style = new TextStyle({ ...BASE_STYLE, fontSize: 11, fill: id === localId ? 0xffff00 : 0xddddee });
+      existing.label.style = id === localId ? CACHED_STYLES.playerLabelLocal : CACHED_STYLES.playerLabelRemote;
     }
     return existing;
   }

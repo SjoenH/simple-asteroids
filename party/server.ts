@@ -500,13 +500,18 @@ export class GameServer extends Server {
 
     // ── Player movement ──
     for (const [id, p] of this.players) {
-      if (!p.actor.getSnapshot().matches("alive")) continue;
+      // Phase 3.1: Cache snapshot to avoid multiple getSnapshot() calls
+      const snapshot = p.actor.getSnapshot();
+      if (!snapshot.matches("alive")) continue;
 
       if (p.isNPC) {
         const influences: BoidInfluence[] = [];
 
         for (const [oid, o] of this.players) {
-          if (oid === id || !o.actor.getSnapshot().matches("alive")) continue;
+          if (oid === id) continue;
+          const oSnapshot = o.actor.getSnapshot();
+          if (!oSnapshot.matches("alive")) continue;
+          
           const distSq = vLenSq(vSub(p.pos, o.pos));
           if (distSq < 60 * 60) {
             influences.push({ pos: o.pos, repel: true, range: 60, strength: 1 });
@@ -514,7 +519,10 @@ export class GameServer extends Server {
         }
 
         for (const [, o] of this.players) {
-          if (o.isNPC || !o.actor.getSnapshot().matches("alive")) continue;
+          if (o.isNPC) continue;
+          const oSnapshot = o.actor.getSnapshot();
+          if (!oSnapshot.matches("alive")) continue;
+          
           const distSq = vLenSq(vSub(p.pos, o.pos));
           if (distSq < 200 * 200) {
             if (distSq < 40 * 40) {
@@ -664,16 +672,20 @@ export class GameServer extends Server {
       if (b.life <= 0) continue;
 
       for (const [pid, p] of this.players) {
-        if (!p.actor.getSnapshot().matches("alive")) continue;
+        // Phase 3.1: Cache snapshot
+        const pSnapshot = p.actor.getSnapshot();
+        if (!pSnapshot.matches("alive")) continue;
         if (b.ownerId === pid) continue;
         const distSq = vLenSq(vSub(b.pos, p.pos));
         if (distSq < 15 * 15) {
           deadBullets.add(bid);
           p.actor.send({ type: "HIT" });
-          const livesLeft = p.actor.getSnapshot().context.lives;
+          const livesLeft = pSnapshot.context.lives - 1; // Already decremented by HIT action
           if (livesLeft === 0) p.actor.send({ type: "GAME_OVER" });
           this.broadcast(JSON.stringify({ type: "playerKilled", id: pid, lives: livesLeft }));
-          if (p.actor.getSnapshot().matches("gameOver")) {
+          // Check new snapshot after sending events
+          const newSnapshot = p.actor.getSnapshot();
+          if (newSnapshot.matches("gameOver")) {
             if (p.isNPC) setTimeout(() => this.respawnPlayer(pid, true), GAME_OVER_RESPAWN_DELAY * 1000);
           } else {
             setTimeout(() => this.respawnPlayer(pid, false), RESPAWN_DELAY * 1000);
@@ -723,18 +735,22 @@ export class GameServer extends Server {
 
     // ── Player-asteroid collisions ──
     for (const [pid, p] of this.players) {
-      if (!p.actor.getSnapshot().matches("alive")) continue;
+      // Phase 3.1: Cache snapshot
+      const pSnapshot = p.actor.getSnapshot();
+      if (!pSnapshot.matches("alive")) continue;
 
       for (const [aid, a] of this.asteroids) {
         const distSq = vLenSq(vSub(p.pos, a.pos));
         const radiusSq = PLAYER_RADII[a.size] * PLAYER_RADII[a.size];
         if (distSq < radiusSq) {
           p.actor.send({ type: "HIT" });
-          const livesLeft = p.actor.getSnapshot().context.lives;
+          const livesLeft = pSnapshot.context.lives - 1; // Already decremented
           if (livesLeft === 0) p.actor.send({ type: "GAME_OVER" });
           this.broadcast(JSON.stringify({ type: "playerKilled", id: pid, lives: livesLeft }));
 
-          if (p.actor.getSnapshot().matches("gameOver")) {
+          // Check new snapshot after sending events
+          const newSnapshot = p.actor.getSnapshot();
+          if (newSnapshot.matches("gameOver")) {
             if (p.isNPC) setTimeout(() => this.respawnPlayer(pid, true), GAME_OVER_RESPAWN_DELAY * 1000);
           } else {
             setTimeout(() => this.respawnPlayer(pid, false), RESPAWN_DELAY * 1000);
@@ -746,7 +762,9 @@ export class GameServer extends Server {
 
     // ── Shooting ──
     for (const [id, p] of this.players) {
-      if (!p.actor.getSnapshot().matches("alive")) continue;
+      // Phase 3.1: Cache snapshot
+      const snapshot = p.actor.getSnapshot();
+      if (!snapshot.matches("alive")) continue;
 
       if (p.shoot && p.shootCooldown <= 0) {
         const isMulti = p.multiCannonTimer > 0;
@@ -788,7 +806,9 @@ export class GameServer extends Server {
 
     // Collect current player states
     for (const [id, p] of this.players) {
-      if (!p.actor.getSnapshot().matches("alive")) continue;
+      // Phase 3.1: Cache snapshot
+      const snapshot = p.actor.getSnapshot();
+      if (!snapshot.matches("alive")) continue;
       updates.players.push({
         id,
         x: p.pos.x,
