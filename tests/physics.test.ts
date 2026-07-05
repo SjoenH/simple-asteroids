@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  vAdd, vSub, vScale, vDot, vCross, vLen, vNorm,
-  tangentOf, randomPos, sphereAdvance, rotateForward, initialTangent,
+  vAdd, vSub, vScale, vDot, vCross, vLen, vNorm, vLenSq,
+  tangentOf, randomPos, randomPosAwayFrom, sphereAdvance, rotateForward, initialTangent,
   RADIUS, type Vec3,
 } from "../party/physics";
 
@@ -96,6 +96,29 @@ describe("randomPos", () => {
       const p = randomPos();
       expect(closeTo(vLen(p), RADIUS, 1e-10)).toBe(true);
     }
+  });
+});
+
+describe("randomPosAwayFrom", () => {
+  it("returns a position at least minDist from all existing", () => {
+    const existing: Vec3[] = [
+      { x: RADIUS, y: 0, z: 0 },
+      { x: -RADIUS, y: 0, z: 0 },
+    ];
+    for (let i = 0; i < 50; i++) {
+      const p = randomPosAwayFrom(existing, 300);
+      expect(closeTo(vLen(p), RADIUS, 1e-10)).toBe(true);
+      for (const e of existing) {
+        expect(vLenSq(vSub(p, e))).toBeGreaterThanOrEqual(300 * 300);
+      }
+    }
+  });
+
+  it("falls back to randomPos when no spot found within maxTries", () => {
+    const dense: Vec3[] = [];
+    for (let i = 0; i < 5000; i++) dense.push(randomPos());
+    const p = randomPosAwayFrom(dense, 500, 3);
+    expect(closeTo(vLen(p), RADIUS, 1e-10)).toBe(true);
   });
 });
 

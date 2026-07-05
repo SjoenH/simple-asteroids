@@ -25,6 +25,7 @@ export const PLAYER_KILL_SCORE = 10;
 export const INVISIBILITY_DURATION = 5;
 export const MULTI_CANNON_DURATION = 8;
 export const MULTI_CANNON_SPREAD = 0.12;
+export const SPAWN_MIN_DIST = 200;
 
 export const NPC_COUNT = 3;
 export const NPC_NAMES = ['Bot Alpha', 'Bot Beta', 'Bot Gamma', 'Bot Delta', 'Bot Epsilon'];
@@ -82,6 +83,26 @@ export function randomPos(): Vec3 {
     y: RADIUS * Math.sin(phi) * Math.sin(theta),
     z: RADIUS * Math.cos(phi),
   };
+}
+
+export function randomPosAwayFrom(
+  existing: Vec3[],
+  minDist: number,
+  maxTries = 50,
+): Vec3 {
+  for (let i = 0; i < maxTries; i++) {
+    const pos = randomPos();
+    const minDistSq = minDist * minDist;
+    let ok = true;
+    for (const e of existing) {
+      const dx = pos.x - e.x;
+      const dy = pos.y - e.y;
+      const dz = pos.z - e.z;
+      if (dx * dx + dy * dy + dz * dz < minDistSq) { ok = false; break; }
+    }
+    if (ok) return pos;
+  }
+  return randomPos();
 }
 
 export function sphereAdvance(pos: Vec3, vel: Vec3, dt: number): { pos: Vec3; vel: Vec3 } {

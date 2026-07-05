@@ -328,3 +328,96 @@ canvas {
   background: rgba(0, 255, 100, 0.25);
   box-shadow: 0 0 18px rgba(0, 255, 100, 0.35);
 }
+
+/* ── Settings overlay ─────────────────────────────────────────────────────── */
+#settings-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 17, 0.88);
+  z-index: 70;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.settings-row:last-child {
+  border-bottom: none;
+}
+
+.settings-label {
+  color: #ccc;
+  font-size: 0.95rem;
+  text-align: left;
+}
+
+.settings-desc {
+  color: #666;
+  font-size: 0.78rem;
+  margin-top: 0.15rem;
+}
+
+.settings-toggle {
+  position: relative;
+  width: 48px;
+  height: 26px;
+  border-radius: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.settings-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #888;
+  transition: transform 0.2s, background 0.2s;
+}
+
+.settings-toggle.on {
+  background: rgba(0, 255, 100, 0.18);
+  border-color: #00ff66;
+}
+
+.settings-toggle.on::after {
+  transform: translateX(22px);
+  background: #00ff66;
+}
+
+.settings-close {
+  margin-top: 1.2rem;
+  display: block;
+  width: 100%;
+  padding: 0.7rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  color: #ccc;
+  font-size: 0.9rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+  letter-spacing: 0.03em;
+}
+
+.settings-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #fff;
+}

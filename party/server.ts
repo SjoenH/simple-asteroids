@@ -7,10 +7,10 @@ import {
   INITIAL_LIVES, RESPAWN_DELAY, GAME_OVER_RESPAWN_DELAY,
   POWERUP_SPAWN_INTERVAL, MAX_POWERUPS, POWERUP_LIFETIME, POWERUP_RADIUS,
   PLAYER_KILL_SCORE, INVISIBILITY_DURATION, MULTI_CANNON_DURATION, MULTI_CANNON_SPREAD,
-  NPC_COUNT, NPC_NAMES,
+  NPC_COUNT, NPC_NAMES, SPAWN_MIN_DIST,
   type PowerUpType, POWERUP_TYPES,
   vAdd, vSub, vScale, vLen, vLenSq, vNorm,
-  tangentOf, randomPos, sphereAdvance, rotateForward, initialTangent,
+  tangentOf, randomPos, randomPosAwayFrom, sphereAdvance, rotateForward, initialTangent,
   npcAI, BoidInfluence,
 } from "./physics";
 
@@ -147,18 +147,13 @@ export class GameServer extends Server {
   private bullets = new Map<string, BulletState>();
   private powerUps = new Map<string, PowerUpState>();
   private gameActor = interpret(gameMachine).start();
-  private tickInterval: ReturnType<typeof setInterval> | null = null;
   private powerUpSpawnTimer = 0;
 
-  constructor(ctx: DurableObjectState, env: Record<string, unknown>) {
-    super(ctx, env);
-  }
-
   async onStart(): Promise<void> {
-    this.tickInterval = setInterval(() => this.tick(), 1000 / 30);
+    setInterval(() => this.tick(), 1000 / 30);
   }
 
-  async onConnect(connection: Connection, ctx: ConnectionContext): Promise<void> {
+  async onConnect(connection: Connection, _ctx: ConnectionContext): Promise<void> {
     const lobbyPlayer: LobbyPlayer = {
       id: connection.id,
       name: "Unknown",
@@ -343,7 +338,13 @@ export class GameServer extends Server {
   private respawnPlayer(id: string, fromGameOver: boolean): void {
     const player = this.players.get(id);
     if (!player) return;
-    player.pos = randomPos();
+    const others: Vec3[] = [];
+    for (const [pid, p] of this.players) {
+      if (pid === id) continue;
+      if (!p.actor.getSnapshot().matches("alive")) continue;
+      others.push(p.pos);
+    }
+    player.pos = randomPosAwayFrom(others, SPAWN_MIN_DIST);
     player.vel = { x: 0, y: 0, z: 0 };
     player.forward = initialTangent(player.pos);
     if (fromGameOver) {
@@ -369,8 +370,9 @@ export class GameServer extends Server {
     );
   }
 
-  private spawnNPC(index: number): void {
-    const pos = randomPos();
+  private spawnNPC(index: number, existing?: Vec3[]): void {
+    const pos = existing ? randomPosAwayFrom(existing, SPAWN_MIN_DIST) : randomPos();
+    if (existing) existing.push(pos);
     const id = `npc_${index}`;
     const player: PlayerState = {
       name: NPC_NAMES[index] ?? `Bot ${index}`,
@@ -413,8 +415,10 @@ export class GameServer extends Server {
   }
 
   private startRound(): void {
+    const usedSpawnPositions: Vec3[] = [];
     for (const [, lp] of this.lobbyPlayers) {
-      const pos = randomPos();
+      const pos = randomPosAwayFrom(usedSpawnPositions, SPAWN_MIN_DIST);
+      usedSpawnPositions.push(pos);
       const p: PlayerState = {
         name: lp.name,
         color: lp.color,
@@ -444,7 +448,7 @@ export class GameServer extends Server {
 
     this.spawnAsteroids(6);
     for (let i = 0; i < NPC_COUNT; i++) {
-      this.spawnNPC(i);
+      this.spawnNPC(i, usedSpawnPositions);
     }
 
     this.gameActor.send({ type: "START" });
@@ -561,7 +565,7 @@ export class GameServer extends Server {
         p.vel = vAdd(p.vel, vScale(p.forward, PLAYER_ACCEL * dt));
       }
       if (p.brake) {
-        p.vel = vScale(p.vel, 1 - BRAKE_DECEL);
+        p.vel = vScale(p.vel, Math.pow(1 - BRAKE_DECEL, dt * 30));
       }
 
       p.vel = vScale(p.vel, 1 - FRICTION * dt);
@@ -623,7 +627,7 @@ export class GameServer extends Server {
     }
 
     // ── Bullets ──
-    for (const [id, b] of this.bullets) {
+    for (const [, b] of this.bullets) {
       const speed = vLen(b.vel);
       const moved = sphereAdvance(b.pos, b.vel, dt);
       b.pos = moved.pos;
@@ -637,7 +641,7 @@ export class GameServer extends Server {
     }
 
     // ── Asteroids ──
-    for (const [id, a] of this.asteroids) {
+    for (const [, a] of this.asteroids) {
       const moved = sphereAdvance(a.pos, a.vel, dt);
       a.pos = moved.pos;
       a.vel = moved.vel;
@@ -739,7 +743,7 @@ export class GameServer extends Server {
       const pSnapshot = p.actor.getSnapshot();
       if (!pSnapshot.matches("alive")) continue;
 
-      for (const [aid, a] of this.asteroids) {
+      for (const [, a] of this.asteroids) {
         const distSq = vLenSq(vSub(p.pos, a.pos));
         const radiusSq = PLAYER_RADII[a.size] * PLAYER_RADII[a.size];
         if (distSq < radiusSq) {

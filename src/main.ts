@@ -54,6 +54,7 @@ const PLAYER_ACCEL = 300;
 const FRICTION = 0.015;
 const BRAKE_DECEL = 0.08;
 const MAX_SPEED = 400;
+const SIM_STEP = 1 / 30;
 
 function vAdd(a: Vec3, b: Vec3): Vec3 {
   return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
@@ -129,6 +130,7 @@ interface PlayerEntry {
   targetPos: Vec3;
   currentPos: Vec3;
   forward: Vec3;
+  targetForward: Vec3;
   score: number;
   lives: number;
   name: string;
@@ -138,6 +140,9 @@ interface PlayerEntry {
   vel: Vec3;
   predictedPos: Vec3;
   predictedForward: Vec3;
+  prevPredictedPos: Vec3;
+  prevPredictedForward: Vec3;
+  simAccumulator: number;
 }
 
 type PowerUpType = 'extraLife' | 'invisibility' | 'multiCannon';
@@ -152,13 +157,16 @@ const players = new Map<string, PlayerEntry>();
 const asteroids = new Map<string, Sprite>();
 const bullets = new Map<string, Sprite>();
 const asteroidPos = new Map<string, Vec3>();
+const asteroidCur = new Map<string, Vec3>();
 const bulletPos = new Map<string, Vec3>();
+const bulletCur = new Map<string, Vec3>();
 const powerUps = new Map<string, PowerUpEntry>();
 
 let localId: string | null = null;
 let playerName = '';
 let connected = false;
 let hostId: string | null = null;
+let predictionEnabled = false;
 
 const app = new Application();
 await app.init({
@@ -274,6 +282,37 @@ hudLayer.addChild(livesLabel);
 const effectLabel = makeText('', { fill: 0x44ff88, fontSize: 12 });
 effectLabel.position.set(10, 70);
 hudLayer.addChild(effectLabel);
+
+const predictionLabel = makeText('PREDICT ON', { fill: 0x445566, fontSize: 11 });
+predictionLabel.position.set(10, 88);
+hudLayer.addChild(predictionLabel);
+
+function updatePredictionLabel(): void {
+  predictionLabel.text = predictionEnabled ? 'PREDICT ON  [P]' : 'PREDICT OFF [P]';
+  predictionLabel.style = predictionEnabled
+    ? CACHED_STYLES.statusGreen
+    : CACHED_STYLES.statusRed;
+}
+updatePredictionLabel();
+
+const debugText = makeText('', { fill: 0x88ccff, fontSize: 11 });
+debugText.position.set(10, 104);
+hudLayer.addChild(debugText);
+
+let debugOverlay = false;
+let lastErrorDist = 0;
+let correctionsApplied = 0;
+let correctionsWindow = 0;
+let debugSecondCounter = 0;
+
+function updateDebugText(): void {
+  if (!debugOverlay) { debugText.visible = false; return; }
+  debugText.visible = true;
+  const dt = app.ticker.deltaMS;
+  debugText.text = `err ${lastErrorDist.toFixed(1)}  corr/s ${correctionsWindow}  dt ${dt.toFixed(1)}ms  steps ${currentSimSteps}`;
+}
+
+let currentSimSteps = 0;
 
 let localLives = 3;
 let localEffects: string[] = [];
@@ -392,7 +431,7 @@ function drawGameOverMap(): void {
 
   // Calculate centroid of alive players for rotation target
   const alivePositions: Vec3[] = [];
-  for (const [eid, ep] of players) {
+  for (const [, ep] of players) {
     if (ep.lives > 0) {
       alivePositions.push(ep.currentPos);
     }
@@ -505,6 +544,82 @@ function hideGameOver(): void {
 const LOBBY_COLORS = [0xffff00, 0x44ddff, 0xff6644, 0x44ff88, 0xff44ff, 0xff8844, 0x8888ff, 0x44ffff];
 let lobbyOverlay: HTMLDivElement | null = null;
 let localReady = false;
+
+let settingsOverlay: HTMLDivElement | null = null;
+
+function showSettings(): void {
+  hideSettings();
+  const overlay = document.createElement('div');
+  overlay.id = 'settings-overlay';
+  overlay.innerHTML = `
+    <div class="nd">
+      <h1>⚙ Settings</h1>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Client-side prediction</div>
+          <div class="settings-desc">Simulate movement locally for less input lag [P]</div>
+        </div>
+        <button class="settings-toggle ${predictionEnabled ? 'on' : ''}" data-setting="prediction"></button>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Debug overlay</div>
+          <div class="settings-desc">Show reconciliation error, dt, sim steps [F3]</div>
+        </div>
+        <button class="settings-toggle ${debugOverlay ? 'on' : ''}" data-setting="debug"></button>
+      </div>
+      <button class="settings-close">Close &nbsp;·&nbsp; ESC or O</button>
+      <p class="hint">Press O anytime to toggle this page</p>
+    </div>`;
+  document.body.appendChild(overlay);
+  settingsOverlay = overlay;
+
+  function syncToggles(): void {
+    overlay.querySelector<HTMLButtonElement>('[data-setting="prediction"]')!
+      .classList.toggle('on', predictionEnabled);
+    overlay.querySelector<HTMLButtonElement>('[data-setting="debug"]')!
+      .classList.toggle('on', debugOverlay);
+    updatePredictionLabel();
+  }
+
+  overlay.querySelector<HTMLButtonElement>('[data-setting="prediction"]')!
+    .addEventListener('click', () => {
+      predictionEnabled = !predictionEnabled;
+      if (predictionEnabled) {
+        const lp = localId ? players.get(localId) : undefined;
+        if (lp) {
+          lp.predictedPos = { ...lp.currentPos };
+          lp.predictedForward = { ...lp.forward };
+          lp.prevPredictedPos = { ...lp.predictedPos };
+          lp.prevPredictedForward = { ...lp.predictedForward };
+          lp.vel = { x: 0, y: 0, z: 0 };
+          lp.simAccumulator = 0;
+        }
+      }
+      syncToggles();
+    });
+
+  overlay.querySelector<HTMLButtonElement>('[data-setting="debug"]')!
+    .addEventListener('click', () => {
+      debugOverlay = !debugOverlay;
+      syncToggles();
+    });
+
+  overlay.querySelector<HTMLButtonElement>('.settings-close')!
+    .addEventListener('click', hideSettings);
+}
+
+function hideSettings(): void {
+  if (settingsOverlay) {
+    settingsOverlay.remove();
+    settingsOverlay = null;
+  }
+}
+
+function toggleSettings(): void {
+  if (settingsOverlay) hideSettings();
+  else showSettings();
+}
 
 function showLobby(): void {
   hideLobby();
@@ -628,6 +743,14 @@ function escHtml(s: string): string {
 app.ticker.add(() => {
   fpsText.text = `FPS: ${Math.round(app.ticker.FPS)}`;
 
+  debugSecondCounter += app.ticker.deltaMS / 1000;
+  if (debugSecondCounter >= 1) {
+    debugSecondCounter = 0;
+    correctionsWindow = correctionsApplied;
+    correctionsApplied = 0;
+  }
+  updateDebugText();
+
   const localPlayer = localId ? players.get(localId) : undefined;
   const pp = localPlayer?.currentPos ?? { x: 0, y: 0, z: RADIUS };
   const pf = localPlayer?.forward ?? { x: 0, y: 0, z: 1 };
@@ -698,59 +821,101 @@ app.ticker.add(() => {
   }
   powerUpGFX.fill();
 
-  // ── Client-side prediction for local player ──
-  if (localPlayer) {
-    const dt = app.ticker.deltaMS / 1000;
-    
-    // Apply input to predicted state
-    const thrust = keys.has('KeyW') || keys.has('ArrowUp');
-    const brake = keys.has('KeyS') || keys.has('ArrowDown');
-    const rotateLeft = keys.has('KeyA') || keys.has('ArrowLeft');
-    const rotateRight = keys.has('KeyD') || keys.has('ArrowRight');
+  const frameDt = Math.min(app.ticker.deltaMS / 1000, 0.1);
 
-    // Rotate predicted forward
-    if (rotateLeft) {
-      localPlayer.predictedForward = rotateForward(localPlayer.predictedForward, localPlayer.predictedPos, -ROTATION_SPEED * dt);
+  // ── Client-side prediction for local player (fixed timestep) ──
+  if (localPlayer && predictionEnabled) {
+    localPlayer.simAccumulator += frameDt;
+
+    // Snapshot current sim state as previous, for render interpolation
+    localPlayer.prevPredictedPos = { ...localPlayer.predictedPos };
+    localPlayer.prevPredictedForward = { ...localPlayer.predictedForward };
+
+    let steps = 0;
+    while (localPlayer.simAccumulator >= SIM_STEP && steps < 5) {
+      const thrust = keys.has('KeyW') || keys.has('ArrowUp');
+      const brake = keys.has('KeyS') || keys.has('ArrowDown');
+      const rotateLeft = keys.has('KeyA') || keys.has('ArrowLeft');
+      const rotateRight = keys.has('KeyD') || keys.has('ArrowRight');
+
+      if (rotateLeft) {
+        localPlayer.predictedForward = rotateForward(localPlayer.predictedForward, localPlayer.predictedPos, -ROTATION_SPEED * SIM_STEP);
+      }
+      if (rotateRight) {
+        localPlayer.predictedForward = rotateForward(localPlayer.predictedForward, localPlayer.predictedPos, ROTATION_SPEED * SIM_STEP);
+      }
+
+      if (thrust) {
+        localPlayer.vel = vAdd(localPlayer.vel, vScale(localPlayer.predictedForward, PLAYER_ACCEL * SIM_STEP));
+      }
+      if (brake) {
+        localPlayer.vel = vScale(localPlayer.vel, Math.pow(1 - BRAKE_DECEL, SIM_STEP * 30));
+      }
+
+      localPlayer.vel = vScale(localPlayer.vel, 1 - FRICTION * SIM_STEP);
+
+      const speed = vLen(localPlayer.vel);
+      if (speed > MAX_SPEED) {
+        localPlayer.vel = vScale(localPlayer.vel, MAX_SPEED / speed);
+      }
+
+      const moved = sphereAdvance(localPlayer.predictedPos, localPlayer.vel, SIM_STEP);
+      localPlayer.predictedPos = moved.pos;
+      localPlayer.vel = moved.vel;
+      localPlayer.predictedForward = vNorm(tangentOf(localPlayer.predictedForward, localPlayer.predictedPos));
+
+      localPlayer.simAccumulator -= SIM_STEP;
+      steps++;
     }
-    if (rotateRight) {
-      localPlayer.predictedForward = rotateForward(localPlayer.predictedForward, localPlayer.predictedPos, ROTATION_SPEED * dt);
-    }
+    if (steps === 5) localPlayer.simAccumulator = 0;
+    currentSimSteps = steps;
 
-    // Apply acceleration
-    if (thrust) {
-      localPlayer.vel = vAdd(localPlayer.vel, vScale(localPlayer.predictedForward, PLAYER_ACCEL * dt));
-    }
-    if (brake) {
-      localPlayer.vel = vScale(localPlayer.vel, 1 - BRAKE_DECEL);
-    }
-
-    // Apply friction
-    localPlayer.vel = vScale(localPlayer.vel, 1 - FRICTION * dt);
-
-    // Clamp velocity
-    const speed = vLen(localPlayer.vel);
-    if (speed > MAX_SPEED) {
-      localPlayer.vel = vScale(localPlayer.vel, MAX_SPEED / speed);
-    }
-
-    // Advance position on sphere
-    const moved = sphereAdvance(localPlayer.predictedPos, localPlayer.vel, dt);
-    localPlayer.predictedPos = moved.pos;
-    localPlayer.vel = moved.vel;
-    localPlayer.predictedForward = vNorm(tangentOf(localPlayer.predictedForward, localPlayer.predictedPos));
-
-    // Use predicted position for camera and rendering
-    localPlayer.currentPos = { ...localPlayer.predictedPos };
-    localPlayer.forward = { ...localPlayer.predictedForward };
+    // Interpolate between prev and current sim state for smooth rendering
+    const alpha = localPlayer.simAccumulator / SIM_STEP;
+    localPlayer.currentPos = {
+      x: localPlayer.prevPredictedPos.x + (localPlayer.predictedPos.x - localPlayer.prevPredictedPos.x) * alpha,
+      y: localPlayer.prevPredictedPos.y + (localPlayer.predictedPos.y - localPlayer.prevPredictedPos.y) * alpha,
+      z: localPlayer.prevPredictedPos.z + (localPlayer.predictedPos.z - localPlayer.prevPredictedPos.z) * alpha,
+    };
+    localPlayer.currentPos = vScale(vNorm(localPlayer.currentPos), RADIUS);
+    localPlayer.forward = vNorm({
+      x: localPlayer.prevPredictedForward.x + (localPlayer.predictedForward.x - localPlayer.prevPredictedForward.x) * alpha,
+      y: localPlayer.prevPredictedForward.y + (localPlayer.predictedForward.y - localPlayer.prevPredictedForward.y) * alpha,
+      z: localPlayer.prevPredictedForward.z + (localPlayer.predictedForward.z - localPlayer.prevPredictedForward.z) * alpha,
+    });
   }
 
+  const lerpK = 1 - Math.pow(1 - 0.18, frameDt * 60);
+
   for (const p of players.values()) {
-    // Skip interpolation for local player - we use prediction
-    if (players.get(localId!) === p) continue;
-    
-    p.currentPos.x += (p.targetPos.x - p.currentPos.x) * 0.18;
-    p.currentPos.y += (p.targetPos.y - p.currentPos.y) * 0.18;
-    p.currentPos.z += (p.targetPos.z - p.currentPos.z) * 0.18;
+    if (predictionEnabled && players.get(localId!) === p) continue;
+
+    p.currentPos.x += (p.targetPos.x - p.currentPos.x) * lerpK;
+    p.currentPos.y += (p.targetPos.y - p.currentPos.y) * lerpK;
+    p.currentPos.z += (p.targetPos.z - p.currentPos.z) * lerpK;
+
+    // Interpolate forward toward target forward
+    p.forward = vNorm({
+      x: p.forward.x + (p.targetForward.x - p.forward.x) * lerpK,
+      y: p.forward.y + (p.targetForward.y - p.forward.y) * lerpK,
+      z: p.forward.z + (p.targetForward.z - p.forward.z) * lerpK,
+    });
+  }
+
+  // Interpolate asteroid and bullet positions toward server targets
+  for (const [id, pos] of asteroidPos) {
+    const cur = asteroidCur.get(id);
+    if (!cur) continue;
+    cur.x += (pos.x - cur.x) * lerpK;
+    cur.y += (pos.y - cur.y) * lerpK;
+    cur.z += (pos.z - cur.z) * lerpK;
+  }
+  for (const [id, pos] of bulletPos) {
+    const cur = bulletCur.get(id);
+    if (!cur) continue;
+    cur.x += (pos.x - cur.x) * lerpK;
+    cur.y += (pos.y - cur.y) * lerpK;
+    cur.z += (pos.z - cur.z) * lerpK;
   }
 
   for (const [id, p] of players) {
@@ -763,7 +928,7 @@ app.ticker.add(() => {
   }
 
   for (const [id, s] of asteroids) {
-    const pos = asteroidPos.get(id);
+    const pos = asteroidCur.get(id);
     if (!pos) continue;
     const screen = radToScreen(pos, pp, pf);
     if (screen) {
@@ -774,7 +939,7 @@ app.ticker.add(() => {
   }
 
   for (const [id, s] of bullets) {
-    const pos = bulletPos.get(id);
+    const pos = bulletCur.get(id);
     if (!pos) continue;
     const screen = radToScreen(pos, pp, pf);
     if (screen) {
@@ -976,6 +1141,7 @@ function ensurePlayer(id: string, name?: string, color?: number): PlayerEntry {
     targetPos: { x: 0, y: 0, z: RADIUS },
     currentPos: { x: 0, y: 0, z: RADIUS },
     forward: { x: 0, y: 0, z: 1 },
+    targetForward: { x: 0, y: 0, z: 1 },
     score: 0,
     lives: 3,
     name: displayName,
@@ -985,6 +1151,9 @@ function ensurePlayer(id: string, name?: string, color?: number): PlayerEntry {
     vel: { x: 0, y: 0, z: 0 },
     predictedPos: { x: 0, y: 0, z: RADIUS },
     predictedForward: { x: 0, y: 0, z: 1 },
+    prevPredictedPos: { x: 0, y: 0, z: RADIUS },
+    prevPredictedForward: { x: 0, y: 0, z: 1 },
+    simAccumulator: 0,
   };
   players.set(id, entry);
   return entry;
@@ -1006,37 +1175,30 @@ function clearPlayers(): void {
 
 function movePlayer(id: string, pos: Vec3, forward?: Vec3): void {
   const p = ensurePlayer(id);
-  
-  if (id === localId) {
-    // Server reconciliation for local player
-    // Only correct if error is significant
+
+  if (id === localId && predictionEnabled) {
     const errorX = pos.x - p.predictedPos.x;
     const errorY = pos.y - p.predictedPos.y;
     const errorZ = pos.z - p.predictedPos.z;
     const errorDist = Math.sqrt(errorX * errorX + errorY * errorY + errorZ * errorZ);
-    
-    // Only correct if error is > 10 units (small threshold)
-    if (errorDist > 10) {
-      const blendFactor = 0.05; // Very gentle correction (5% per update)
-      p.predictedPos.x += errorX * blendFactor;
-      p.predictedPos.y += errorY * blendFactor;
-      p.predictedPos.z += errorZ * blendFactor;
+    lastErrorDist = errorDist;
+
+    // Prediction is locally authoritative between snaps.
+    // Only correct on large divergence to avoid fighting the simulation.
+    if (errorDist > 200) {
+      correctionsApplied++;
+      p.predictedPos = { x: pos.x, y: pos.y, z: pos.z };
+      p.prevPredictedPos = { ...p.predictedPos };
+      if (forward) {
+        p.predictedForward = { ...forward };
+        p.prevPredictedForward = { ...p.predictedForward };
+      }
+      p.simAccumulator = 0;
     }
-    
-    if (forward) {
-      // Very gentle forward correction
-      const blendFactor = 0.05;
-      p.predictedForward.x = p.predictedForward.x * (1 - blendFactor) + forward.x * blendFactor;
-      p.predictedForward.y = p.predictedForward.y * (1 - blendFactor) + forward.y * blendFactor;
-      p.predictedForward.z = p.predictedForward.z * (1 - blendFactor) + forward.z * blendFactor;
-      p.predictedForward = vNorm(p.predictedForward);
-    }
-    
-    // Don't update targetPos for local player, we use predicted position
   } else {
-    // Remote players use normal interpolation
+    // Remote players (or local with prediction off) use interpolation
     p.targetPos = pos;
-    if (forward) p.forward = forward;
+    if (forward) p.targetForward = forward;
   }
 }
 
@@ -1048,6 +1210,7 @@ function ensureAsteroid(id: string, pos: Vec3, size?: number): void {
     s.anchor.set(0.5);
     gameLayer.addChildAt(s, 0);
     asteroids.set(id, s);
+    asteroidCur.set(id, { ...pos });
   }
   asteroidPos.set(id, pos);
   if (size !== undefined) asteroids.get(id)!.scale.set(ASTEROID_SCALES[size] ?? 1);
@@ -1059,6 +1222,7 @@ function dropAsteroid(id: string): void {
   gameLayer.removeChild(s);
   asteroids.delete(id);
   asteroidPos.delete(id);
+  asteroidCur.delete(id);
 }
 
 function ensureBullet(id: string, pos: Vec3): void {
@@ -1068,6 +1232,7 @@ function ensureBullet(id: string, pos: Vec3): void {
     s.scale.set(0.6);
     gameLayer.addChildAt(s, 0);
     bullets.set(id, s);
+    bulletCur.set(id, { ...pos });
   }
   bulletPos.set(id, pos);
 }
@@ -1078,6 +1243,7 @@ function dropBullet(id: string): void {
   gameLayer.removeChild(s);
   bullets.delete(id);
   bulletPos.delete(id);
+  bulletCur.delete(id);
 }
 
 const keys = new Set<string>();
@@ -1086,7 +1252,31 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
   keys.add(e.code);
   if (e.code === 'Space') e.preventDefault();
   if (e.code === 'Escape') {
-    ws.send(JSON.stringify({ type: "surrender" }));
+    if (settingsOverlay) { hideSettings(); }
+    else { ws.send(JSON.stringify({ type: "surrender" })); }
+  }
+  if (e.code === 'KeyO') {
+    e.preventDefault();
+    toggleSettings();
+  }
+  if (e.code === 'KeyP') {
+    predictionEnabled = !predictionEnabled;
+    if (predictionEnabled) {
+      const lp = localId ? players.get(localId) : undefined;
+      if (lp) {
+        lp.predictedPos = { ...lp.currentPos };
+        lp.predictedForward = { ...lp.forward };
+        lp.prevPredictedPos = { ...lp.predictedPos };
+        lp.prevPredictedForward = { ...lp.predictedForward };
+        lp.vel = { x: 0, y: 0, z: 0 };
+        lp.simAccumulator = 0;
+      }
+    }
+    updatePredictionLabel();
+  }
+  if (e.code === 'F3' || e.code === 'Backquote') {
+    e.preventDefault();
+    debugOverlay = !debugOverlay;
   }
 });
 
@@ -1212,6 +1402,7 @@ function handleMessage(e: MessageEvent): void {
       }
       if (data.fx !== undefined) {
         p.forward = { x: data.fx as number, y: data.fy as number, z: data.fz as number };
+        p.targetForward = { ...p.forward };
       }
       if (data.isNPC !== undefined) {
         p.isNPC = Boolean(data.isNPC);
@@ -1304,6 +1495,17 @@ function handleMessage(e: MessageEvent): void {
       p.currentPos = { ...pos };
       if (data.fx !== undefined) {
         p.forward = { x: data.fx as number, y: data.fy as number, z: data.fz as number };
+        p.targetForward = { ...p.forward };
+      }
+      if (id === localId) {
+        p.predictedPos = { ...pos };
+        p.predictedForward = data.fx !== undefined
+          ? { x: data.fx as number, y: data.fy as number, z: data.fz as number }
+          : { ...p.predictedForward };
+        p.prevPredictedPos = { ...p.predictedPos };
+        p.prevPredictedForward = { ...p.predictedForward };
+        p.vel = { x: 0, y: 0, z: 0 };
+        p.simAccumulator = 0;
       }
       const lives = data.lives as number | undefined;
       if (lives !== undefined) {
@@ -1407,12 +1609,19 @@ function handleMessage(e: MessageEvent): void {
           entry.targetPos = { x: p.x, y: p.y, z: p.z };
           entry.currentPos = { ...entry.targetPos };
           entry.forward = { x: p.fx, y: p.fy, z: p.fz };
+          entry.targetForward = { ...entry.forward };
           entry.score = p.score ?? 0;
           entry.lives = p.lives ?? 3;
           entry.isNPC = p.isNPC ?? false;
           if (p.id === localId) {
             localLives = entry.lives;
             updateLivesDisplay();
+            entry.predictedPos = { x: p.x, y: p.y, z: p.z };
+            entry.predictedForward = { x: p.fx, y: p.fy, z: p.fz };
+            entry.prevPredictedPos = { ...entry.predictedPos };
+            entry.prevPredictedForward = { ...entry.predictedForward };
+            entry.vel = { x: 0, y: 0, z: 0 };
+            entry.simAccumulator = 0;
           }
         }
       }
@@ -1480,7 +1689,7 @@ function showNameEntry(): void {
       <input id="pname" type="text" maxlength="20" placeholder="Ace Pilot" />
       <button id="join-btn">${isPrivateRoom ? 'Join Room' : 'Join Public Game'}</button>
       ${isPrivateRoom ? '' : '<button id="create-room-btn">Create Private Room</button>'}
-      <p class="hint">WASD / ↑←↓→ — fly &nbsp;·&nbsp; SPACE — shoot &nbsp;·&nbsp; ESC — surrender</p>
+      <p class="hint">WASD / ↑←↓→ — fly &nbsp;·&nbsp; SPACE — shoot &nbsp;·&nbsp; ESC — surrender &nbsp;·&nbsp; O — settings</p>
     </div>`;
   document.body.appendChild(overlay);
 
